@@ -1,0 +1,11 @@
+[package]
+name = "wt-cockpit"
+version = "0.1.0"
+edition = "2024"
+description = "Lazy cockpit manager for herdr: browse, launch, and tear down agent workspaces bound to git worktrees"
+license = "MIT"
+repository = "https://github.com/ctbaum/wt-cockpit"
+
+[dependencies]
+ratatui = "0.30.2"
+serde_json = "1"
