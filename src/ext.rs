@@ -1,8 +1,8 @@
 //! Subprocess wrappers around herdr / wt / zoxide / fd / git, plus the
 //! opinionated deck builder.
 
-use serde_json::Value;
 use crate::sessions::{Agent as SessionAgent, Session};
+use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -77,7 +77,10 @@ pub fn workspaces() -> Vec<Ws> {
 }
 
 pub fn ws_id_for_label(label: &str) -> Option<String> {
-    workspaces().into_iter().find(|w| w.label == label).map(|w| w.id)
+    workspaces()
+        .into_iter()
+        .find(|w| w.label == label)
+        .map(|w| w.id)
 }
 
 pub fn focus_workspace(id: &str) {
@@ -126,8 +129,19 @@ pub fn open_remote(host: &str) {
 /// directory — no dependence on the worktree-path layout.
 pub fn dirs() -> (Vec<PathBuf>, Vec<PathBuf>) {
     let z = out(&["zoxide", "query", "-l"]).unwrap_or_default();
-    let f = out(&["fd", "-H", "-d", "2", "-t", "d", "-E", ".Trash", ".", &home()])
-        .unwrap_or_default();
+    let f = out(&[
+        "fd",
+        "-H",
+        "-d",
+        "2",
+        "-t",
+        "d",
+        "-E",
+        ".Trash",
+        ".",
+        &home(),
+    ])
+    .unwrap_or_default();
     let mut seen = HashSet::new();
     let (mut wt, mut other) = (vec![], vec![]);
     for line in z.lines().chain(f.lines()) {
@@ -227,20 +241,76 @@ struct Spec {
 }
 
 const AGENTS: &[Spec] = &[
-    Spec { id: "claude", bin: "claude", danger: Dangerous::Flag("--dangerously-skip-permissions") },
-    Spec { id: "codex", bin: "codex", danger: Dangerous::Flag("--dangerously-bypass-approvals-and-sandbox") },
-    Spec { id: "copilot", bin: "copilot", danger: Dangerous::Flag("--yolo") },
-    Spec { id: "cursor", bin: "cursor-agent", danger: Dangerous::Flag("--force") },
-    Spec { id: "devin", bin: "devin", danger: Dangerous::Flag("--permission-mode dangerous") },
-    Spec { id: "droid", bin: "droid", danger: Dangerous::Flag("--skip-permissions-unsafe") },
-    Spec { id: "kimi", bin: "kimi", danger: Dangerous::Flag("--yolo") },
-    Spec { id: "opencode", bin: "opencode", danger: Dangerous::Env("OPENCODE_PERMISSION='{\"*\":\"allow\"}'") },
-    Spec { id: "kilo", bin: "kilo", danger: Dangerous::Flag("--auto") },
-    Spec { id: "hermes", bin: "hermes", danger: Dangerous::Flag("--yolo") },
-    Spec { id: "qodercli", bin: "qodercli", danger: Dangerous::Flag("--yolo") },
-    Spec { id: "pi", bin: "pi", danger: Dangerous::None },
-    Spec { id: "omp", bin: "omp", danger: Dangerous::Flag("--yolo") },
-    Spec { id: "mastracode", bin: "mastracode", danger: Dangerous::None },
+    Spec {
+        id: "claude",
+        bin: "claude",
+        danger: Dangerous::Flag("--dangerously-skip-permissions"),
+    },
+    Spec {
+        id: "codex",
+        bin: "codex",
+        danger: Dangerous::Flag("--dangerously-bypass-approvals-and-sandbox"),
+    },
+    Spec {
+        id: "copilot",
+        bin: "copilot",
+        danger: Dangerous::Flag("--yolo"),
+    },
+    Spec {
+        id: "cursor",
+        bin: "cursor-agent",
+        danger: Dangerous::Flag("--force"),
+    },
+    Spec {
+        id: "devin",
+        bin: "devin",
+        danger: Dangerous::Flag("--permission-mode dangerous"),
+    },
+    Spec {
+        id: "droid",
+        bin: "droid",
+        danger: Dangerous::Flag("--skip-permissions-unsafe"),
+    },
+    Spec {
+        id: "kimi",
+        bin: "kimi",
+        danger: Dangerous::Flag("--yolo"),
+    },
+    Spec {
+        id: "opencode",
+        bin: "opencode",
+        danger: Dangerous::Env("OPENCODE_PERMISSION='{\"*\":\"allow\"}'"),
+    },
+    Spec {
+        id: "kilo",
+        bin: "kilo",
+        danger: Dangerous::Flag("--auto"),
+    },
+    Spec {
+        id: "hermes",
+        bin: "hermes",
+        danger: Dangerous::Flag("--yolo"),
+    },
+    Spec {
+        id: "qodercli",
+        bin: "qodercli",
+        danger: Dangerous::Flag("--yolo"),
+    },
+    Spec {
+        id: "pi",
+        bin: "pi",
+        danger: Dangerous::None,
+    },
+    Spec {
+        id: "omp",
+        bin: "omp",
+        danger: Dangerous::Flag("--yolo"),
+    },
+    Spec {
+        id: "mastracode",
+        bin: "mastracode",
+        danger: Dangerous::None,
+    },
 ];
 
 fn spec(id: &str) -> Option<&'static Spec> {
@@ -254,7 +324,10 @@ fn agent_binary(id: &str) -> &str {
 /// Whether the launch form's dangerous toggle does anything for this agent.
 /// False for agents without a known dangerous mode and unknown ids.
 pub fn dangerous_toggleable(id: &str) -> bool {
-    matches!(spec(id).map(|s| &s.danger), Some(Dangerous::Flag(_) | Dangerous::Env(_)))
+    matches!(
+        spec(id).map(|s| &s.danger),
+        Some(Dangerous::Flag(_) | Dangerous::Env(_))
+    )
 }
 
 /// Pane command for a non-editor agent, applying its dangerous mechanism when
@@ -272,38 +345,46 @@ fn shell_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\"'\"'"))
 }
 
-fn claude_launch_args(resume: Option<&Session>, dangerous: bool) -> String {
-    let mut args = resume
-        .filter(|s| s.agent == SessionAgent::Claude)
-        .map(|s| format!("--resume {}", shell_quote(&s.id)))
-        .unwrap_or_default();
+fn claude_launch_args(resume: Option<&Session>, dangerous: bool) -> Vec<String> {
+    let mut args = Vec::new();
+    if let Some(session) = resume.filter(|s| s.agent == SessionAgent::Claude) {
+        args.extend(["--resume".into(), session.id.clone()]);
+    }
     if dangerous {
-        if !args.is_empty() {
-            args.push(' ');
-        }
-        args.push_str("--dangerously-skip-permissions");
+        args.push("--dangerously-skip-permissions".into());
     }
     args
 }
 
-fn codex_launch_args(resume: Option<&Session>, dangerous: bool) -> String {
+fn codex_launch_args(resume: Option<&Session>, dangerous: bool) -> Vec<String> {
     if let Some(session) = resume.filter(|s| s.agent == SessionAgent::Codex) {
-        return format!(
-            "resume {} --dangerously-bypass-approvals-and-sandbox",
-            shell_quote(&session.id)
-        );
+        return vec![
+            "resume".into(),
+            session.id.clone(),
+            "--dangerously-bypass-approvals-and-sandbox".into(),
+        ];
     }
     if dangerous {
-        "--dangerously-bypass-approvals-and-sandbox".into()
+        vec!["--dangerously-bypass-approvals-and-sandbox".into()]
     } else {
-        String::new()
+        Vec::new()
     }
+}
+
+fn shell_join(args: &[String]) -> String {
+    args.iter()
+        .map(|arg| shell_quote(arg))
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn session_command(session: &Session) -> String {
     match session.agent {
-        SessionAgent::Claude => String::new(), // spawned inside nvim via HERDR_DECK_CLAUDE_ARGS
-        SessionAgent::Codex => format!("codex {}", codex_launch_args(Some(session), true)),
+        SessionAgent::Claude => String::new(), // spawned inside nvim via HERDR_NVIM_AGENT
+        SessionAgent::Codex => format!(
+            "codex {}",
+            shell_join(&codex_launch_args(Some(session), true))
+        ),
         SessionAgent::Cursor if session.native_picker => "cursor-agent ls".into(),
         SessionAgent::Cursor => format!(
             "{} --resume {}",
@@ -431,9 +512,11 @@ fn launch_deck_inner(
     let mut project = String::new();
     let mut br = String::new();
     if in_git_repo(&target) {
-        if let Some(porcelain) =
-            out(&["git", "-C", &target_str, "worktree", "list", "--porcelain"])
-            && let Some(root) = porcelain.lines().next().and_then(|l| l.strip_prefix("worktree "))
+        if let Some(porcelain) = out(&["git", "-C", &target_str, "worktree", "list", "--porcelain"])
+            && let Some(root) = porcelain
+                .lines()
+                .next()
+                .and_then(|l| l.strip_prefix("worktree "))
         {
             project = Path::new(root.trim())
                 .file_name()
@@ -477,30 +560,54 @@ fn launch_deck_inner(
     // Env via `workspace create --env` (a `pane run` prefix would be echoed
     // onto the pane). Claude and Codex both start through nvim so their IDE
     // servers exist before the Herdr terminal provider launches the agent.
-    let claude_args = claude_launch_args(resume, dangerous);
-    let claude_args = format!("HERDR_DECK_CLAUDE_ARGS={claude_args}");
-    let codex_args = codex_launch_args(resume, dangerous);
-    let codex_args = format!("HERDR_DECK_CODEX_ARGS={codex_args}");
+    let launch_args = match agent {
+        Some("claude") => claude_launch_args(resume, dangerous),
+        Some("codex") => codex_launch_args(resume, dangerous),
+        _ => Vec::new(),
+    };
+    let launch_args = serde_json::to_string(&launch_args)
+        .map_err(|error| format!("could not encode editor-agent arguments: {error}"))?;
+    let launch_args = format!("HERDR_NVIM_AGENT_ARGS_JSON={launch_args}");
     let mut create: Vec<&str> = vec![
-        "herdr", "workspace", "create", "--cwd", &target_str, "--label", &label, "--no-focus",
+        "herdr",
+        "workspace",
+        "create",
+        "--cwd",
+        &target_str,
+        "--label",
+        &label,
+        "--no-focus",
     ];
     if agent == Some("claude") {
-        create.extend(["--env", "HERDR_DECK_AGENT=claude", "--env", &claude_args]);
+        create.extend(["--env", "HERDR_NVIM_AGENT=claude", "--env", &launch_args]);
     } else if agent == Some("codex") {
-        create.extend(["--env", "HERDR_DECK_AGENT=codex", "--env", &codex_args]);
+        create.extend(["--env", "HERDR_NVIM_AGENT=codex", "--env", &launch_args]);
     }
     let created = json(&create).ok_or("herdr workspace create failed")?;
     let root_pane = &created["result"]["root_pane"];
-    let ws = root_pane["workspace_id"].as_str().ok_or("no workspace_id in create result")?;
-    let root = root_pane["pane_id"].as_str().ok_or("no pane_id in create result")?;
+    let ws = root_pane["workspace_id"]
+        .as_str()
+        .ok_or("no workspace_id in create result")?;
+    let root = root_pane["pane_id"]
+        .as_str()
+        .ok_or("no pane_id in create result")?;
     let root_tab = root_pane["tab_id"].as_str().unwrap_or("");
 
     out(&["herdr", "tab", "rename", root_tab, "deck"]);
 
     // Full-width terminal on the bottom row.
     out(&[
-        "herdr", "pane", "split", root, "--direction", "down", "--ratio", "0.8", "--cwd",
-        &target_str, "--no-focus",
+        "herdr",
+        "pane",
+        "split",
+        root,
+        "--direction",
+        "down",
+        "--ratio",
+        "0.8",
+        "--cwd",
+        &target_str,
+        "--no-focus",
     ]);
 
     match agent {
@@ -516,12 +623,22 @@ fn launch_deck_inner(
                 .map(session_command)
                 .unwrap_or_else(|| agent_command(a, dangerous));
             let split = json(&[
-                "herdr", "pane", "split", root, "--direction", "right", "--ratio", "0.7",
-                "--cwd", &target_str, "--no-focus",
+                "herdr",
+                "pane",
+                "split",
+                root,
+                "--direction",
+                "right",
+                "--ratio",
+                "0.7",
+                "--cwd",
+                &target_str,
+                "--no-focus",
             ])
             .ok_or("pane split for agent failed")?;
-            let agent_pane =
-                split["result"]["pane"]["pane_id"].as_str().ok_or("no pane_id in split result")?;
+            let agent_pane = split["result"]["pane"]["pane_id"]
+                .as_str()
+                .ok_or("no pane_id in split result")?;
             out(&["herdr", "pane", "run", root, "nvim"]);
             out(&["herdr", "pane", "run", agent_pane, &cmd]);
         }
@@ -529,7 +646,15 @@ fn launch_deck_inner(
 
     // Unfocused lazygit tab — one keystroke away, out of the way.
     if let Some(tab) = json(&[
-        "herdr", "tab", "create", "--workspace", ws, "--cwd", &target_str, "--label", "lazygit",
+        "herdr",
+        "tab",
+        "create",
+        "--workspace",
+        ws,
+        "--cwd",
+        &target_str,
+        "--label",
+        "lazygit",
         "--no-focus",
     ]) && let Some(git_pane) = tab["result"]["root_pane"]["pane_id"].as_str()
     {
@@ -547,11 +672,17 @@ mod tests {
     #[test]
     fn dangerous_command_and_toggle() {
         // Flag agents append; cursor uses its cursor-agent binary.
-        assert_eq!(agent_command("codex", true), "codex --dangerously-bypass-approvals-and-sandbox");
+        assert_eq!(
+            agent_command("codex", true),
+            "codex --dangerously-bypass-approvals-and-sandbox"
+        );
         assert_eq!(agent_command("codex", false), "codex");
         assert_eq!(agent_command("cursor", true), "cursor-agent --force");
         // opencode has no flag: prefix the env instead.
-        assert_eq!(agent_command("opencode", true), "OPENCODE_PERMISSION='{\"*\":\"allow\"}' opencode");
+        assert_eq!(
+            agent_command("opencode", true),
+            "OPENCODE_PERMISSION='{\"*\":\"allow\"}' opencode"
+        );
         // Agents with no known mechanism and unknown agents: no-op, and the
         // toggle is greyed.
         assert_eq!(agent_command("pi", true), "pi");
@@ -574,29 +705,36 @@ mod tests {
         };
         assert_eq!(
             session_command(&session),
-            "codex resume 'abc-123' --dangerously-bypass-approvals-and-sandbox"
+            "codex 'resume' 'abc-123' '--dangerously-bypass-approvals-and-sandbox'"
         );
         assert_eq!(
             codex_launch_args(Some(&session), false),
-            "resume 'abc-123' --dangerously-bypass-approvals-and-sandbox"
+            vec![
+                "resume",
+                "abc-123",
+                "--dangerously-bypass-approvals-and-sandbox"
+            ]
         );
         assert_eq!(
             codex_launch_args(None, true),
-            "--dangerously-bypass-approvals-and-sandbox"
+            vec!["--dangerously-bypass-approvals-and-sandbox"]
         );
-        assert_eq!(codex_launch_args(None, false), "");
+        assert!(codex_launch_args(None, false).is_empty());
 
         session.agent = SessionAgent::Claude;
         assert_eq!(
             claude_launch_args(Some(&session), true),
-            "--resume 'abc-123' --dangerously-skip-permissions"
+            vec!["--resume", "abc-123", "--dangerously-skip-permissions"]
         );
-        assert_eq!(claude_launch_args(Some(&session), false), "--resume 'abc-123'");
+        assert_eq!(
+            claude_launch_args(Some(&session), false),
+            vec!["--resume", "abc-123"]
+        );
         assert_eq!(
             claude_launch_args(None, true),
-            "--dangerously-skip-permissions"
+            vec!["--dangerously-skip-permissions"]
         );
-        assert_eq!(claude_launch_args(None, false), "");
+        assert!(claude_launch_args(None, false).is_empty());
 
         session.agent = SessionAgent::Pi;
         session.file = Some(PathBuf::from("/tmp/project's session.jsonl"));

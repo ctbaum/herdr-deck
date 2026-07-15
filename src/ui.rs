@@ -33,8 +33,7 @@ fn panel(title: Line<'static>) -> Block<'static> {
 
 pub fn draw(f: &mut Frame, app: &mut App) {
     let area = f.area();
-    let [main, footer] =
-        Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(area);
+    let [main, footer] = Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(area);
     let [left, right] =
         Layout::horizontal([Constraint::Percentage(LIST_PCT), Constraint::Min(1)]).areas(main);
     let [input_area, results_area] =
@@ -59,7 +58,11 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         ])),
         input_inner,
     );
-    let pos = if app.filtered.is_empty() { 0 } else { app.selected + 1 };
+    let pos = if app.filtered.is_empty() {
+        0
+    } else {
+        app.selected + 1
+    };
     f.render_widget(
         Paragraph::new(Line::from(
             format!("{pos} / {} ", app.filtered.len()).blue().italic(),
@@ -126,7 +129,11 @@ pub fn draw(f: &mut Frame, app: &mut App) {
 
 /// Label spans with tv-style match highlighting (matched chars in yellow).
 fn label_spans(label: &str, filter: &str) -> Vec<Span<'static>> {
-    let indices = if filter.is_empty() { None } else { app::match_indices(label, filter) };
+    let indices = if filter.is_empty() {
+        None
+    } else {
+        app::match_indices(label, filter)
+    };
     let Some(indices) = indices else {
         return vec![Span::raw(label.to_string())];
     };
@@ -140,7 +147,11 @@ fn label_spans(label: &str, filter: &str) -> Vec<Span<'static>> {
             it.next();
         }
         if hit != cur && !buf.is_empty() {
-            spans.push(if cur { std::mem::take(&mut buf).yellow() } else { Span::raw(std::mem::take(&mut buf)) });
+            spans.push(if cur {
+                std::mem::take(&mut buf).yellow()
+            } else {
+                Span::raw(std::mem::take(&mut buf))
+            });
         }
         cur = hit;
         buf.push(c);
@@ -210,23 +221,49 @@ fn draw_launch(f: &mut Frame, area: Rect, form: &LaunchForm, agents: &[String]) 
     let check = |on: bool| if on { "[x]" } else { "[ ]" };
     // Detected agents + "none"; selected option rendered bold.
     let mut agent_spans = vec![field_label(" agent    ", form.field == 0)];
-    for (i, name) in agents.iter().map(String::as_str).chain(["none"]).enumerate() {
-        let radio = format!("{} {}   ", if form.agent == i { "(•)" } else { "( )" }, name);
-        agent_spans.push(if form.agent == i { radio.bold() } else { Span::raw(radio) });
+    for (i, name) in agents
+        .iter()
+        .map(String::as_str)
+        .chain(["none"])
+        .enumerate()
+    {
+        let radio = format!(
+            "{} {}   ",
+            if form.agent == i { "(•)" } else { "( )" },
+            name
+        );
+        agent_spans.push(if form.agent == i {
+            radio.bold()
+        } else {
+            Span::raw(radio)
+        });
     }
-    let agent_width = agent_spans.iter().map(|s| s.content.chars().count()).sum::<usize>();
+    let agent_width = agent_spans
+        .iter()
+        .map(|s| s.content.chars().count())
+        .sum::<usize>();
     let lines = vec![
         Line::from(agent_spans),
         Line::from(vec![
             field_label(" branch   ", form.field == 1),
             form.branch.clone().yellow(),
-            if form.field == 1 { "▌".yellow() } else { Span::raw("") },
+            if form.field == 1 {
+                "▌".yellow()
+            } else {
+                Span::raw("")
+            },
         ]),
         Line::from(vec![
             // Greyed out for agents without a known dangerous mode and
             // "none", where the toggle has no effect.
-            if agents.get(form.agent).is_some_and(|a| ext::dangerous_toggleable(a)) {
-                field_label(&format!(" {} dangerous", check(form.dangerous)), form.field == 2)
+            if agents
+                .get(form.agent)
+                .is_some_and(|a| ext::dangerous_toggleable(a))
+            {
+                field_label(
+                    &format!(" {} dangerous", check(form.dangerous)),
+                    form.field == 2,
+                )
             } else {
                 format!(" {} dangerous", check(form.dangerous)).dim()
             },
@@ -234,18 +271,31 @@ fn draw_launch(f: &mut Frame, area: Rect, form: &LaunchForm, agents: &[String]) 
         Line::raw(""),
         Line::from(" ⇥ field · space/←→ toggle · ↵ launch · esc back".dim()),
     ];
-    let title = format!(" launch: {} ", ext::collapse_tilde(&form.dir.to_string_lossy()));
+    let title = format!(
+        " launch: {} ",
+        ext::collapse_tilde(&form.dir.to_string_lossy())
+    );
     let w = (agent_width as u16 + 2).max(52);
     modal(f, area, Line::from(title.green().bold()), lines, w);
 }
 
 fn draw_new_path(f: &mut Frame, area: Rect, input: &str) {
     let lines = vec![
-        Line::from(vec![" path ".dim(), input.to_string().yellow(), "▌".yellow()]),
+        Line::from(vec![
+            " path ".dim(),
+            input.to_string().yellow(),
+            "▌".yellow(),
+        ]),
         Line::raw(""),
         Line::from(" ↵ mkdir + launch · esc back".dim()),
     ];
-    modal(f, area, Line::from(" new directory ".green().bold()), lines, 52);
+    modal(
+        f,
+        area,
+        Line::from(" new directory ".green().bold()),
+        lines,
+        52,
+    );
 }
 
 fn draw_confirm(f: &mut Frame, area: Rect, msg: &str, action: &DelAction) {
@@ -262,7 +312,12 @@ fn draw_confirm(f: &mut Frame, area: Rect, msg: &str, action: &DelAction) {
             "esc".bold(),
             " cancel".dim(),
         ]),
-        _ => Line::from(vec![" y".bold(), " confirm · ".dim(), "esc".bold(), " cancel".dim()]),
+        _ => Line::from(vec![
+            " y".bold(),
+            " confirm · ".dim(),
+            "esc".bold(),
+            " cancel".dim(),
+        ]),
     };
     let w = (msg.chars().count() as u16 + 4).clamp(36, area.width);
     let lines = vec![Line::raw(format!(" {msg}")), Line::raw(""), hint];
@@ -274,15 +329,24 @@ fn draw_help(f: &mut Frame, area: Rect) {
         ("type", "filter the list (esc clears)"),
         ("^s", "switch projects / agent sessions source"),
         ("⇥", "sessions: filter by agent (shift-tab reverses)"),
-        ("↵", "workspace: focus · remote ⇄: new window · dir: launch form"),
+        (
+            "↵",
+            "workspace: focus · remote ⇄: new window · dir: launch form",
+        ),
         ("^n", "new directory (mkdir -p), then launch form"),
         ("^d", "workspace: close · worktree: merge-gated remove"),
         ("^r", "reload the list"),
         ("esc", "back / quit"),
         ("", ""),
         ("", "new worktree = ↵ on a repo + fill the branch field"),
-        ("", "remotes (⇄) come from $HERDR_DECK_REMOTES, one window each"),
-        ("", "dangerous mode is enabled by default; disable it before launch"),
+        (
+            "",
+            "remotes (⇄) come from $HERDR_DECK_REMOTES, one window each",
+        ),
+        (
+            "",
+            "dangerous mode is enabled by default; disable it before launch",
+        ),
     ]
     .iter()
     .map(|(k, v)| Line::from(vec![format!(" {k:5} ").bold(), Span::raw(v.to_string())]))

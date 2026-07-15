@@ -9,6 +9,11 @@ use ratatui::crossterm::execute;
 use std::time::Duration;
 
 fn main() -> std::io::Result<()> {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if matches!(args.first().map(String::as_str), Some("--help" | "-h")) {
+        println!("herdr-deck\n\nUSAGE:\n  herdr-deck");
+        return Ok(());
+    }
     if std::env::var("HERDR_ENV").as_deref() != Ok("1") {
         eprintln!("herdr-deck: not inside a herdr session (HERDR_ENV != 1)");
         std::process::exit(1);

@@ -155,11 +155,17 @@ impl App {
                 for w in ext::workspaces() {
                     self.entries.push(Entry {
                         label: w.label,
-                        kind: EntryKind::Workspace { id: w.id, status: w.status },
+                        kind: EntryKind::Workspace {
+                            id: w.id,
+                            status: w.status,
+                        },
                     });
                 }
                 for host in ext::remotes() {
-                    self.entries.push(Entry { label: host.clone(), kind: EntryKind::Remote(host) });
+                    self.entries.push(Entry {
+                        label: host.clone(),
+                        kind: EntryKind::Remote(host),
+                    });
                 }
                 let (wt, other) = ext::dirs();
                 for p in wt {
@@ -176,10 +182,11 @@ impl App {
                 }
             }
             Source::Sessions => {
-                self.entries.extend(crate::sessions::list().into_iter().map(|session| Entry {
-                    label: session.title.clone(),
-                    kind: EntryKind::Session(session),
-                }));
+                self.entries
+                    .extend(crate::sessions::list().into_iter().map(|session| Entry {
+                        label: session.title.clone(),
+                        kind: EntryKind::Session(session),
+                    }));
             }
         }
         self.invalidate_previews();
@@ -218,7 +225,9 @@ impl App {
     /// Queue the selected entry's preview for the worker thread. Called from
     /// the event loop only when input is idle (debounce for free).
     pub fn request_preview(&mut self, w: u16, h: u16) {
-        let Some(entry) = self.selected_entry() else { return };
+        let Some(entry) = self.selected_entry() else {
+            return;
+        };
         let key = entry.cache_key();
         if self.preview.contains_key(&key) || self.requested.contains(&key) {
             return;
@@ -300,7 +309,9 @@ impl App {
     }
 
     fn open_selected(&mut self) {
-        let Some(entry) = self.selected_entry() else { return };
+        let Some(entry) = self.selected_entry() else {
+            return;
+        };
         match &entry.kind {
             EntryKind::Workspace { id, .. } => {
                 ext::focus_workspace(id);
@@ -337,11 +348,16 @@ impl App {
             SessionAgent::Pi,
         ];
         let available: Vec<Option<SessionAgent>> = std::iter::once(None)
-            .chain(order.into_iter().filter(|agent| {
-                self.entries.iter().any(
-                    |e| matches!(&e.kind, EntryKind::Session(s) if s.agent == *agent),
-                )
-            }).map(Some))
+            .chain(
+                order
+                    .into_iter()
+                    .filter(|agent| {
+                        self.entries
+                            .iter()
+                            .any(|e| matches!(&e.kind, EntryKind::Session(s) if s.agent == *agent))
+                    })
+                    .map(Some),
+            )
             .collect();
         let current = available
             .iter()
@@ -354,7 +370,9 @@ impl App {
     }
 
     fn delete_selected(&mut self) {
-        let Some(entry) = self.selected_entry() else { return };
+        let Some(entry) = self.selected_entry() else {
+            return;
+        };
         match &entry.kind {
             EntryKind::Workspace { id, .. } => {
                 self.mode = Mode::ConfirmDelete {
@@ -379,10 +397,7 @@ impl App {
                     };
                 } else {
                     self.mode = Mode::ConfirmDelete {
-                        msg: format!(
-                            "{branch} is not merged (state: {}).",
-                            info.main_state
-                        ),
+                        msg: format!("{branch} is not merged (state: {}).", info.main_state),
                         action: DelAction::OfferForce(p.clone(), branch),
                     };
                 }
@@ -435,7 +450,9 @@ impl App {
     fn key_launch(&mut self, key: KeyEvent) {
         let n_agents = self.agents.len() + 1; // + "none"
         let agents = &self.agents;
-        let Mode::Launch(form) = &mut self.mode else { return };
+        let Mode::Launch(form) = &mut self.mode else {
+            return;
+        };
         match key.code {
             KeyCode::Esc => self.mode = Mode::List,
             KeyCode::Tab | KeyCode::Down => form.field = (form.field + 1) % 3,
@@ -444,8 +461,7 @@ impl App {
                 let (dir, idx, branch) = (form.dir.clone(), form.agent, form.branch.clone());
                 let dangerous = form.dangerous;
                 let agent = self.agents.get(idx).cloned();
-                match ext::launch_deck(&dir, agent.as_deref(), branch.trim(), dangerous)
-                {
+                match ext::launch_deck(&dir, agent.as_deref(), branch.trim(), dangerous) {
                     Ok(()) => self.quit = true,
                     Err(e) => {
                         self.status = Some(e);
@@ -453,15 +469,15 @@ impl App {
                     }
                 }
             }
-            KeyCode::Left if form.field == 0 => {
-                form.agent = (form.agent + n_agents - 1) % n_agents
-            }
+            KeyCode::Left if form.field == 0 => form.agent = (form.agent + n_agents - 1) % n_agents,
             KeyCode::Right | KeyCode::Char(' ') if form.field == 0 => {
                 form.agent = (form.agent + 1) % n_agents
             }
             KeyCode::Char(' ')
                 if form.field == 2
-                    && agents.get(form.agent).is_some_and(|a| ext::dangerous_toggleable(a)) =>
+                    && agents
+                        .get(form.agent)
+                        .is_some_and(|a| ext::dangerous_toggleable(a)) =>
             {
                 form.dangerous = !form.dangerous
             }
@@ -474,7 +490,9 @@ impl App {
     }
 
     fn key_new_path(&mut self, key: KeyEvent) {
-        let Mode::NewPath { input } = &mut self.mode else { return };
+        let Mode::NewPath { input } = &mut self.mode else {
+            return;
+        };
         match key.code {
             KeyCode::Esc => self.mode = Mode::List,
             KeyCode::Backspace => {

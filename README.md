@@ -85,8 +85,8 @@ thing you selected.
 - The CLI for whichever agent you select, available on `PATH`. Herdr's direct
   agent integrations are strongly recommended so status indicators work.
 
-Rust and Cargo are needed only to build from source. Installing the binary
-does not install or configure any of the tools below.
+Rust and Cargo are needed only to build from source. The binary does not install
+or modify Neovim plugins; the editor bridge is a separate conventional plugin.
 
 ### Feature dependencies
 
@@ -96,8 +96,9 @@ does not install or configure any of the tools below.
 | directory discovery | `zoxide` and/or `fd` | that source becomes sparse or empty |
 | directory preview | `eza`, with `ls` fallback | falls back to plain `ls -la` |
 | git tab | `lazygit` | the tab is still created, but its command fails |
-| Claude deck | Claude Code + [claudecode.nvim](https://github.com/coder/claudecode.nvim) + compatible nvim glue | nvim opens, but Claude does not auto-start |
-| Codex deck | Codex CLI + [ishiooon/codex.nvim](https://github.com/ishiooon/codex.nvim) + compatible nvim glue | nvim opens, but Codex does not auto-start |
+| Claude deck | Claude Code CLI + [herdr-agents.nvim](https://github.com/ctbaum/herdr-agents.nvim) + claudecode.nvim | nvim opens, but Claude does not auto-start |
+| Codex deck | Codex CLI + [herdr-agents.nvim](https://github.com/ctbaum/herdr-agents.nvim) + codex.nvim | nvim opens, but Codex does not auto-start |
+| connection-true pane identity | `pgrep`, `ps` or Linux `/proc`, `grep`, `sed`, `tr`, `sh` | same-tab geometry remains as a startup fallback |
 | saved sessions | agent-owned local history files | only histories found at the supported hardcoded locations appear |
 | remote entries | macOS `open` + Ghostty | remote launch is unavailable on other terminals/platforms |
 
@@ -106,108 +107,73 @@ Saved-session discovery currently reads `~/.claude/projects`,
 through its own picker, so herdr-deck opens `cursor-agent ls`. These are
 agent-owned storage formats and may change underneath herdr-deck.
 
-### Editor-integrated agent decks
+### Neovim integration
 
-> [!WARNING]
-> Claude and Codex are not launched directly by the binary. herdr-deck starts
-> nvim with the contract below and expects nvim to establish the IDE connection
-> before creating the agent pane. Without compatible nvim glue, the workspace
-> opens with an editor and terminal but no Claude/Codex pane.
+Claude and Codex are intentionally launched by their Neovim plugins, after the
+editor-side IDE server is ready. The reusable bridge now lives in
+[herdr-agents.nvim](https://github.com/ctbaum/herdr-agents.nvim), with
+claudecode.nvim and codex.nvim declared through your normal plugin manager.
+For lazy.nvim:
 
-| agent | variable | value set by herdr-deck |
-|---|---|---|
-| Claude | `HERDR_DECK_AGENT` | `claude` |
-| Claude | `HERDR_DECK_CLAUDE_ARGS` | the dangerous-mode flag when enabled, plus `--resume ID` for a saved session |
-| Codex | `HERDR_DECK_AGENT` | `codex` |
-| Codex | `HERDR_DECK_CODEX_ARGS` | the dangerous-mode flag when enabled, or `resume ID` plus that flag for a saved session |
+```lua
+local inside_herdr = vim.env.HERDR_SOCKET_PATH
+  and vim.env.HERDR_SOCKET_PATH ~= ""
+
+return {
+  {
+    "ctbaum/herdr-agents.nvim",
+    cond = inside_herdr,
+    lazy = false,
+    dependencies = {
+      { "coder/claudecode.nvim", dependencies = { "folke/snacks.nvim" } },
+      { "ishiooon/codex.nvim", dependencies = { "folke/snacks.nvim" } },
+    },
+    opts = {},
+  },
+}
+```
+
+The plugin manager owns installation, updates, pins, and removal. Existing
+dependency checkouts are reused rather than duplicated. If those upstream
+plugins already have specs in your configuration, keep one spec for each and
+avoid calling their ordinary `setup()` inside Herdr—the bridge supplies the
+terminal providers there. Outside Herdr, retain their normal configuration.
+
+herdr-agents.nvim installs **no key mappings** and reserves no leader namespace.
+It exposes the upstream `:ClaudeCode*` and `:Codex*` commands plus
+`:ClaudeHerdrSendSelection` and `:ClaudeHerdrSendDiagnostics`; users bind only
+what they want. Run `:checkhealth herdr-agents` for local diagnostics.
+
+The active package supplies the complete sibling-pane
+behavior: external terminal providers, IDE environment forwarding, prompt
+readiness waits, connection-port/process identity, same-tab fallback, agent
+focus/send operations, selection and diagnostics forwarding, native diff
+commands, and duplicate-agent protection. Connection-true identity inspects
+local process environments using `pgrep` plus `ps`, or `/proc` on Linux; launch
+arguments and IDE environment variables are forwarded into the new Herdr pane.
+
+| variable | value set by herdr-deck |
+|---|---|
+| `HERDR_NVIM_AGENT` | `claude` or `codex` |
+| `HERDR_NVIM_AGENT_ARGS_JSON` | JSON array containing the dangerous-mode flag when enabled and any saved-session resume arguments |
 
 This ordering is intentional: both plugins create an editor-side server and
 pass connection variables to the agent process. Starting the CLI independently
 at the same time as nvim introduces a race and can leave the agent running with
-no IDE connection.
+no IDE connection. The binary only sets this launch contract; all editor-side
+behavior belongs to herdr-agents.nvim.
 
-#### Claude Code: what the Herdr adapter adds
-
-[`claudecode.nvim`](https://github.com/coder/claudecode.nvim) supplies the
-WebSocket IDE server, selection helpers, and native diff protocol. A compatible
-herdr-deck configuration must extend it in several Herdr-specific ways:
-
-1. Call `require("claudecode").setup()` first, then consume
-   `HERDR_DECK_AGENT` and `HERDR_DECK_CLAUDE_ARGS`.
-2. Inside Herdr, use claudecode.nvim's external terminal provider. Its callback
-   must create a right split beside the editor and attach every environment
-   variable supplied by the plugin (including its SSE port and IDE flags) to
-   that new pane. The command should run only after the pane's interactive shell
-   is ready. Outside Herdr, retain the plugin's normal in-nvim terminal.
-3. Resolve the Claude belonging to this nvim by IDE-port/process identity, with
-   same-tab geometry only as a fallback. Matching any Claude in the workspace is
-   unsafe when several decks are open.
-4. Override focus and selection/diagnostic sending for the external pane with
-   `herdr agent focus` and `herdr agent send`. Diff accept/revert still travels
-   through claudecode.nvim's WebSocket connection.
-5. On an nvim restart, avoid spawning a duplicate agent. The surviving Claude
-   may need `/ide` or a rebuilt deck to connect to the new editor server.
-
-Minimal auto-start logic looks like this, but by itself uses whichever terminal
-provider you configured; it does **not** recreate the sibling-pane behavior:
-
-```lua
-require("claudecode").setup(opts)
-if vim.env.HERDR_DECK_AGENT == "claude" then
-  vim.schedule(function()
-    vim.cmd("ClaudeCode " .. (vim.env.HERDR_DECK_CLAUDE_ARGS or ""))
-  end)
-end
-```
-
-My full adapter is maintained in the dotfiles source at
-[`nvim/lua/plugins/claudecode.lua`](https://gitlab.com/ctbaum/dotfiles/-/blob/main/nvim/.config/nvim/lua/plugins/claudecode.lua).
-It currently assumes `jq`, `pgrep`, `ps`, `grep`, `sed`, `tr`, `sh`, and a zsh
-prompt that contains `➜`. Those are dependencies of this reference adapter,
-not of the herdr-deck binary.
-
-#### Codex: what the Herdr adapter adds
-
-[`ishiooon/codex.nvim`](https://github.com/ishiooon/codex.nvim) already supplies
-an MCP/WebSocket server, editor tools, selection/file mentions, diagnostics, and
-native diff review. It also exposes a custom terminal-provider interface, so the
-Herdr layer can remain local configuration rather than a plugin fork:
-
-1. Call `require("codex").setup()` first, then open
-   `require("codex.terminal")` with `HERDR_DECK_CODEX_ARGS` when
-   `HERDR_DECK_AGENT=codex`.
-2. Implement a terminal provider whose `open` method creates the right-hand
-   Herdr split and attaches the plugin-provided environment table. It must also
-   implement focus/toggle/close against the real Herdr pane rather than tracking
-   the short-lived split launcher process.
-3. Associate the agent with this nvim by matching `CODEX_CODE_SSE_PORT` in the
-   Codex process environment to the editor server port, then reading that
-   process's `HERDR_PANE_ID`. Use same-tab geometry only before MCP connects.
-4. Let codex.nvim continue handling selection, files, diagnostics, and diffs
-   through MCP; the provider is responsible only for terminal lifecycle.
-
-Minimal auto-start logic, again without the Herdr sibling-pane provider:
-
-```lua
-require("codex").setup(opts)
-if vim.env.HERDR_DECK_AGENT == "codex" then
-  vim.schedule(function()
-    require("codex.terminal").open({}, vim.env.HERDR_DECK_CODEX_ARGS)
-  end)
-end
-```
-
-My full custom provider is maintained at
-[`nvim/lua/plugins/codex.lua`](https://gitlab.com/ctbaum/dotfiles/-/blob/main/nvim/.config/nvim/lua/plugins/codex.lua).
-It uses `pgrep`, `ps`, `grep`, `sed`, `tr`, and `sh` for connection-true pane
-identity.
+The shell-readiness match defaults to `➜`. If your prompt does not contain that
+symbol, set `HERDR_NVIM_PROMPT_MATCH` to stable text from your prompt; the agent
+still launches after an eight-second timeout if it never matches.
 
 ### Environment variables
 
 | variable | direction | purpose |
 |---|---|---|
-| `HERDR_DECK_AGENT`, `HERDR_DECK_CLAUDE_ARGS`, `HERDR_DECK_CODEX_ARGS` | herdr-deck → workspace | editor-agent/nvim startup contract described above |
+| `HERDR_NVIM_AGENT`, `HERDR_NVIM_AGENT_ARGS_JSON` | herdr-deck → workspace | launcher-neutral editor-agent startup contract described above |
 | `HERDR_DECK_REMOTES` | user → herdr-deck | comma/space-separated SSH aliases shown as remote entries |
+| `HERDR_NVIM_PROMPT_MATCH` | user → Neovim adapter | shell-prompt text awaited before launching the agent; defaults to `➜` |
 | `HERDR_NAV_PASSTHROUGH_RE` | user → navigation plugin | lets `ctrl-j/k` reach herdr-deck when using seamless pane navigation |
 | `HERDR_*` | Herdr → processes | inherited session/socket identity; scrubbed only when opening a remote Ghostty window |
 
@@ -236,8 +202,9 @@ cd herdr-deck
 cargo install --path .
 ```
 
-Either way the binary lands in `~/.cargo/bin` (make sure that's on your
-PATH). Then bind it in `~/.config/herdr/config.toml`:
+Either way the binary lands in `~/.cargo/bin` (make sure that's on your PATH).
+Install herdr-agents.nvim with your Neovim plugin manager as described above,
+then bind the binary in `~/.config/herdr/config.toml`:
 
 ```toml
 [[keys.command]]
@@ -284,11 +251,10 @@ herdr-deck mirrors my own personal workflow and layout:
   from a built-in table, and is **on by default**; unknown agents get no toggle;
 - remote entries spawn their window via macOS `open` + Ghostty, hardcoded.
 
-In practical terms: without nvim, deck launch is broken; without lazygit,
-the git tab is empty; without the matching Claude/Codex nvim glue, those
-decks contain only nvim; and selecting an agent normally launches it with
-its unsafe/yolo mode enabled. These are current design choices, not graceful
-optional paths.
+In practical terms: without nvim, deck launch is broken; without lazygit, the
+git tab is empty; without herdr-agents.nvim, Claude/Codex decks contain only nvim;
+and selecting an agent normally launches it with its unsafe/yolo mode enabled.
+These are current design choices, not graceful optional paths.
 
 Worktrees are recognised structurally — any directory whose `.git` is a
 file (a linked git worktree) — so any worktrunk `worktree-path` layout
