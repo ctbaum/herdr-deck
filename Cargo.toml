@@ -1,0 +1,11 @@
+[package]
+name = "herdr-deck"
+version = "0.1.0"
+edition = "2024"
+description = "Lazy deck manager for herdr: browse, launch, and tear down agent workspaces bound to git worktrees"
+license = "MIT"
+repository = "https://github.com/ctbaum/herdr-deck"
+
+[dependencies]
+ratatui = "0.30.2"
+serde_json = "1"
