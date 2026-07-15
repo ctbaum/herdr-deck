@@ -6,7 +6,7 @@
 //! input/match text, bright-yellow-on-black selection, blue count/preview
 //! title, rounded borders.
 
-use crate::app::{self, App, DelAction, Entry, EntryKind, LaunchForm, Mode};
+use crate::app::{self, App, DelAction, Entry, EntryKind, LaunchForm, Mode, Source};
 use crate::ext;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
@@ -41,7 +41,14 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         Layout::vertical([Constraint::Length(3), Constraint::Min(1)]).areas(left);
 
     // Input bar: "> query▌" in yellow, "sel / total" count in blue italic.
-    let input_block = panel(Line::from(" wt-cockpit ".green().bold()));
+    let source = match app.source {
+        Source::Projects => "projects",
+        Source::Sessions => app.session_agent.map(|a| a.id()).unwrap_or("sessions"),
+    };
+    let input_block = panel(Line::from(vec![
+        " wt-cockpit ".green().bold(),
+        format!("[{source}] ").cyan(),
+    ]));
     let input_inner = input_block.inner(input_area);
     f.render_widget(input_block, input_area);
     f.render_widget(
@@ -97,8 +104,12 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     // Footer: status message wins over the key hints.
     let footer_line = match &app.status {
         Some(s) => Line::from(s.clone().yellow()),
+        None if app.source == Source::Sessions => Line::from(
+            " type to filter · ⇥ agent · ^s projects · ↵ resume · ^r reload · ? help · esc quit"
+                .dim(),
+        ),
         None => Line::from(
-            " type to filter · ↵ open · ^n new · ^d delete · ^r reload · ? help · esc quit"
+            " type to filter · ^s sessions · ↵ open · ^n new · ^d delete · ^r reload · ? help · esc quit"
                 .dim(),
         ),
     };
@@ -152,6 +163,15 @@ fn entry_line(e: &Entry, filter: &str) -> Line<'static> {
             vec![dot, Span::raw(" ")]
         }
         EntryKind::Remote(_) => vec!["⇄ ".cyan()],
+        EntryKind::Session(s) => {
+            let icon = match s.agent {
+                crate::sessions::Agent::Claude => "C",
+                crate::sessions::Agent::Codex => "X",
+                crate::sessions::Agent::Cursor => "↗",
+                crate::sessions::Agent::Pi => "π",
+            };
+            vec![format!("{icon} ").cyan()]
+        }
         _ => vec!["▸ ".dim()],
     };
     spans.extend(label_spans(&e.label, filter));
@@ -252,6 +272,8 @@ fn draw_confirm(f: &mut Frame, area: Rect, msg: &str, action: &DelAction) {
 fn draw_help(f: &mut Frame, area: Rect) {
     let lines: Vec<Line> = [
         ("type", "filter the list (esc clears)"),
+        ("^s", "switch projects / agent sessions source"),
+        ("⇥", "sessions: filter by agent (shift-tab reverses)"),
         ("↵", "workspace: focus · remote ⇄: new window · dir: launch form"),
         ("^n", "new directory (mkdir -p), then launch form"),
         ("^d", "workspace: close · worktree: merge-gated remove"),

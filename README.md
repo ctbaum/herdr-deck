@@ -34,6 +34,11 @@ No daemon, no async runtime, one small binary.
   using herdr's known-agent list), optionally name a branch (the worktree is
   created via `wt switch` if needed), and go. wt-cockpit builds a cockpit
   workspace: editor + agent pane + full-width terminal + a lazygit tab.
+- **Resume**: `ctrl-s` switches to a separate session-history source, so past
+  conversations never pollute workspace/path search. Type searches the first
+  prompt and project path; Tab filters by agent. Claude, Codex, and Pi sessions
+  resume directly in the picker pane. Cursor hands off to its native session
+  picker because its CLI does not expose an enumerable local history store.
 - **Create**: `ctrl-n` prompts for a new directory. A new worktree in an
   existing repo is just Enter on the repo plus the branch field.
 - **Destroy**: `ctrl-d` closes a workspace, or removes a worktree — but only
@@ -83,7 +88,9 @@ around.
 | key | action |
 |-----|--------|
 | type | filter (esc clears) |
-| `↵` | focus workspace / open remote window / launch form |
+| `↵` | focus workspace / open remote window / launch form / resume session |
+| `ctrl-s` | switch projects / past sessions source |
+| `tab` / `shift-tab` | sessions: cycle agent filter |
 | `ctrl-n` | new directory, then launch form |
 | `ctrl-d` | close workspace / merge-gated worktree remove |
 | `ctrl-r` | reload |

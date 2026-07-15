@@ -16,7 +16,32 @@ pub fn compute(entry: &Entry, w: u16, h: u16, own_pane: &str) -> Text<'static> {
         EntryKind::Remote(host) => remote(host),
         EntryKind::Worktree(p) => worktree(p),
         EntryKind::Dir(p) => listing(p),
+        EntryKind::Session(s) => session(s),
     }
+}
+
+fn session(s: &crate::sessions::Session) -> Text<'static> {
+    let action = if s.native_picker {
+        "opens Cursor's native session picker"
+    } else {
+        "resumes this session in the picker pane"
+    };
+    Text::from(vec![
+        Line::from(vec!["agent    ".dim(), s.agent.id().to_string().bold()]),
+        Line::from(vec![
+            "project  ".dim(),
+            Span::raw(ext::collapse_tilde(&s.cwd.to_string_lossy())),
+        ]),
+        Line::from(vec![
+            "updated  ".dim(),
+            Span::raw(crate::sessions::age(s.updated)),
+        ]),
+        Line::from(vec!["session  ".dim(), Span::raw(s.id.clone())]),
+        Line::raw(""),
+        Line::from(s.title.clone().bold()),
+        Line::raw(""),
+        Line::from(action.dim()),
+    ])
 }
 
 fn remote(host: &str) -> Text<'static> {

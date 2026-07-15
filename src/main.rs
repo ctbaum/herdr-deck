@@ -1,6 +1,7 @@
 mod app;
 mod ext;
 mod preview;
+mod sessions;
 mod ui;
 
 use ratatui::crossterm::event::{self, DisableFocusChange, EnableFocusChange, Event, KeyEventKind};
@@ -48,5 +49,8 @@ fn main() -> std::io::Result<()> {
     }
     let _ = execute!(std::io::stdout(), DisableFocusChange);
     ratatui::restore();
+    if let Some(session) = app.resume.take() {
+        return Err(sessions::resume(session));
+    }
     Ok(())
 }

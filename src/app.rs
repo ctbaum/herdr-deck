@@ -2,6 +2,7 @@
 //! active; all actions shell out through ext.rs.
 
 use crate::ext;
+use crate::sessions::{Agent as SessionAgent, Session};
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::text::Text;
 use std::collections::{HashMap, HashSet};
@@ -14,6 +15,7 @@ pub enum EntryKind {
     Remote(String), // ssh alias from $WT_COCKPIT_REMOTES; opens herdr --remote
     Worktree(PathBuf),
     Dir(PathBuf),
+    Session(Session),
 }
 
 #[derive(Clone)]
@@ -26,9 +28,27 @@ impl Entry {
     pub fn cache_key(&self) -> String {
         match &self.kind {
             EntryKind::Workspace { id, .. } => format!("w:{id}"),
+            EntryKind::Session(s) => format!("s:{}:{}", s.agent.id(), s.id),
             _ => format!("d:{}", self.label),
         }
     }
+
+    fn matches(&self, filter: &str) -> bool {
+        match_indices(&self.label, filter).is_some()
+            || match &self.kind {
+                EntryKind::Session(s) => {
+                    match_indices(s.agent.id(), filter).is_some()
+                        || match_indices(&s.cwd.to_string_lossy(), filter).is_some()
+                }
+                _ => false,
+            }
+    }
+}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+pub enum Source {
+    Projects,
+    Sessions,
 }
 
 pub struct LaunchForm {
@@ -62,8 +82,11 @@ pub struct App {
     pub mode: Mode,
     pub preview: HashMap<String, Text<'static>>,
     pub agents: Vec<String>, // detected agent binaries; launch form adds "none"
+    pub source: Source,
+    pub session_agent: Option<SessionAgent>,
     pub status: Option<String>,
     pub quit: bool,
+    pub resume: Option<Session>,
     // Previews run subprocesses (herdr/wt/eza) on a worker thread so a slow
     // or hung command can never freeze the UI; results drain each tick.
     preview_tx: mpsc::Sender<(String, Entry, u16, u16)>,
@@ -114,8 +137,11 @@ impl App {
             mode: Mode::List,
             preview: HashMap::new(),
             agents: ext::detected_agents(),
+            source: Source::Projects,
+            session_agent: None,
             status: None,
             quit: false,
+            resume: None,
             preview_tx,
             preview_rx,
             requested: HashSet::new(),
@@ -126,27 +152,37 @@ impl App {
 
     pub fn reload(&mut self) {
         self.entries.clear();
-        for w in ext::workspaces() {
-            self.entries.push(Entry {
-                label: w.label,
-                kind: EntryKind::Workspace { id: w.id, status: w.status },
-            });
-        }
-        for host in ext::remotes() {
-            self.entries.push(Entry { label: host.clone(), kind: EntryKind::Remote(host) });
-        }
-        let (wt, other) = ext::dirs();
-        for p in wt {
-            self.entries.push(Entry {
-                label: ext::collapse_tilde(&p.to_string_lossy()),
-                kind: EntryKind::Worktree(p),
-            });
-        }
-        for p in other {
-            self.entries.push(Entry {
-                label: ext::collapse_tilde(&p.to_string_lossy()),
-                kind: EntryKind::Dir(p),
-            });
+        match self.source {
+            Source::Projects => {
+                for w in ext::workspaces() {
+                    self.entries.push(Entry {
+                        label: w.label,
+                        kind: EntryKind::Workspace { id: w.id, status: w.status },
+                    });
+                }
+                for host in ext::remotes() {
+                    self.entries.push(Entry { label: host.clone(), kind: EntryKind::Remote(host) });
+                }
+                let (wt, other) = ext::dirs();
+                for p in wt {
+                    self.entries.push(Entry {
+                        label: ext::collapse_tilde(&p.to_string_lossy()),
+                        kind: EntryKind::Worktree(p),
+                    });
+                }
+                for p in other {
+                    self.entries.push(Entry {
+                        label: ext::collapse_tilde(&p.to_string_lossy()),
+                        kind: EntryKind::Dir(p),
+                    });
+                }
+            }
+            Source::Sessions => {
+                self.entries.extend(crate::sessions::list().into_iter().map(|session| Entry {
+                    label: session.title.clone(),
+                    kind: EntryKind::Session(session),
+                }));
+            }
         }
         self.invalidate_previews();
         self.apply_filter();
@@ -159,7 +195,14 @@ impl App {
 
     pub fn apply_filter(&mut self) {
         self.filtered = (0..self.entries.len())
-            .filter(|&i| match_indices(&self.entries[i].label, &self.filter).is_some())
+            .filter(|&i| {
+                let entry = &self.entries[i];
+                let agent_matches = match (&entry.kind, self.session_agent) {
+                    (EntryKind::Session(s), Some(agent)) => s.agent == agent,
+                    _ => true,
+                };
+                agent_matches && entry.matches(&self.filter)
+            })
             .collect();
         self.selected = self.selected.min(self.filtered.len().saturating_sub(1));
     }
@@ -229,6 +272,19 @@ impl App {
                 self.selected = (self.selected + 1).min(self.filtered.len().saturating_sub(1))
             }
             KeyCode::Enter => self.open_selected(),
+            KeyCode::Char('s') if ctrl => {
+                self.source = if self.source == Source::Projects {
+                    Source::Sessions
+                } else {
+                    Source::Projects
+                };
+                self.session_agent = None;
+                self.filter.clear();
+                self.selected = 0;
+                self.reload();
+            }
+            KeyCode::Tab if self.source == Source::Sessions => self.cycle_session_agent(1),
+            KeyCode::BackTab if self.source == Source::Sessions => self.cycle_session_agent(-1),
             KeyCode::Char('n') if ctrl => self.mode = Mode::NewPath { input: "~/".into() },
             KeyCode::Char('d') if ctrl => self.delete_selected(),
             KeyCode::Char('r') if ctrl => self.reload(),
@@ -265,7 +321,35 @@ impl App {
                     field: 0,
                 });
             }
+            EntryKind::Session(session) => {
+                self.resume = Some(session.clone());
+                self.quit = true;
+            }
         }
+    }
+
+    fn cycle_session_agent(&mut self, delta: isize) {
+        let order = [
+            SessionAgent::Claude,
+            SessionAgent::Codex,
+            SessionAgent::Cursor,
+            SessionAgent::Pi,
+        ];
+        let available: Vec<Option<SessionAgent>> = std::iter::once(None)
+            .chain(order.into_iter().filter(|agent| {
+                self.entries.iter().any(
+                    |e| matches!(&e.kind, EntryKind::Session(s) if s.agent == *agent),
+                )
+            }).map(Some))
+            .collect();
+        let current = available
+            .iter()
+            .position(|agent| *agent == self.session_agent)
+            .unwrap_or(0) as isize;
+        let next = (current + delta).rem_euclid(available.len() as isize) as usize;
+        self.session_agent = available[next];
+        self.selected = 0;
+        self.apply_filter();
     }
 
     fn delete_selected(&mut self) {
@@ -302,7 +386,7 @@ impl App {
                     };
                 }
             }
-            EntryKind::Dir(_) | EntryKind::Remote(_) => {
+            EntryKind::Dir(_) | EntryKind::Remote(_) | EntryKind::Session(_) => {
                 self.status = Some("not a workspace or worktree; nothing to delete".into());
             }
         }
