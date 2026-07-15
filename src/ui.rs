@@ -14,7 +14,7 @@ use ratatui::style::{Color, Style, Stylize};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Clear, List, ListItem, ListState, Paragraph};
 
-const LIST_PCT: u16 = 38;
+const LIST_PCT: u16 = 23;
 
 /// Inner size of the preview panel for a given terminal size — kept next to
 /// the layout so preview rendering and computation agree.
