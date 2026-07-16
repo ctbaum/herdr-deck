@@ -43,6 +43,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     let source = match app.source {
         Source::Projects => "projects",
         Source::Sessions => app.session_agent.map(|a| a.id()).unwrap_or("sessions"),
+        Source::Cleanup => "cleanable",
     };
     let input_block = panel(Line::from(vec![
         " herdr-deck ".green().bold(),
@@ -108,12 +109,13 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     let footer_line = match &app.status {
         Some(s) => Line::from(s.clone().yellow()),
         None if app.source == Source::Sessions => Line::from(
-            " type to filter · ⇥ agent · ^s projects · ↵ resume · ^r reload · ? help · esc quit"
-                .dim(),
+            " type to filter · ⇥ agent · ^s projects · ^g cleanable · ↵ resume · ^r reload · ? help · esc quit".dim(),
+        ),
+        None if app.source == Source::Cleanup => Line::from(
+            " type to filter · ^g projects · ^d remove one · ^x remove all clean · ^r reload · ? help · esc quit".dim(),
         ),
         None => Line::from(
-            " type to filter · ^s sessions · ↵ open · ^n new · ^d delete · ^r reload · ? help · esc quit"
-                .dim(),
+            " type to filter · ^s sessions · ^g cleanable · ↵ open · ^n new · ^d delete · ^r reload · ? help · esc quit".dim(),
         ),
     };
     f.render_widget(Paragraph::new(footer_line), footer);
@@ -174,6 +176,11 @@ fn entry_line(e: &Entry, filter: &str) -> Line<'static> {
             vec![dot, Span::raw(" ")]
         }
         EntryKind::Remote(_) => vec!["⇄ ".cyan()],
+        EntryKind::Cleanable { clean, .. } => vec![if *clean {
+            "✓ ".green()
+        } else {
+            "! ".yellow()
+        }],
         EntryKind::Session(s) => {
             let icon = match s.agent {
                 crate::sessions::Agent::Claude => "C",
@@ -245,10 +252,15 @@ fn draw_launch(f: &mut Frame, area: Rect, form: &LaunchForm, agents: &[String]) 
     let lines = vec![
         Line::from(agent_spans),
         Line::from(vec![
-            field_label(" branch   ", form.field == 1),
+            field_label(" checkout ", form.field == 1),
             form.branch.clone().yellow(),
             if form.field == 1 {
                 "▌".yellow()
+            } else {
+                Span::raw("")
+            },
+            if form.branch.is_empty() {
+                " branch · ^ · - · @ · pr:N · mr:N".dim()
             } else {
                 Span::raw("")
             },
@@ -269,13 +281,14 @@ fn draw_launch(f: &mut Frame, area: Rect, form: &LaunchForm, agents: &[String]) 
             },
         ]),
         Line::raw(""),
+        Line::from(" ^ default · - previous · @ current · pr:N GitHub · mr:N GitLab".dim()),
         Line::from(" ⇥ field · space/←→ toggle · ↵ launch · esc back".dim()),
     ];
     let title = format!(
         " launch: {} ",
         ext::collapse_tilde(&form.dir.to_string_lossy())
     );
-    let w = (agent_width as u16 + 2).max(52);
+    let w = (agent_width as u16 + 2).max(68);
     modal(f, area, Line::from(title.green().bold()), lines, w);
 }
 
@@ -312,6 +325,12 @@ fn draw_confirm(f: &mut Frame, area: Rect, msg: &str, action: &DelAction) {
             "esc".bold(),
             " cancel".dim(),
         ]),
+        DelAction::RemoveAll(..) => Line::from(vec![
+            " y".bold().red(),
+            " remove all clean · ".dim(),
+            "esc".bold(),
+            " cancel".dim(),
+        ]),
         _ => Line::from(vec![
             " y".bold(),
             " confirm · ".dim(),
@@ -328,6 +347,7 @@ fn draw_help(f: &mut Frame, area: Rect) {
     let lines: Vec<Line> = [
         ("type", "filter the list (esc clears)"),
         ("^s", "switch projects / agent sessions source"),
+        ("^g", "toggle cleanable integrated-worktree source"),
         ("⇥", "sessions: filter by agent (shift-tab reverses)"),
         (
             "↵",
@@ -335,10 +355,14 @@ fn draw_help(f: &mut Frame, area: Rect) {
         ),
         ("^n", "new directory (mkdir -p), then launch form"),
         ("^d", "workspace: close · worktree: merge-gated remove"),
+        (
+            "^x",
+            "cleanable: remove all clean entries in the filtered view",
+        ),
         ("^r", "reload the list"),
         ("esc", "back / quit"),
         ("", ""),
-        ("", "new worktree = ↵ on a repo + fill the branch field"),
+        ("", "new worktree = ↵ on a repo + branch/PR/wt shortcut"),
         (
             "",
             "remotes (⇄) come from $HERDR_DECK_REMOTES, one window each",

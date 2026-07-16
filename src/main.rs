@@ -8,10 +8,27 @@ use ratatui::crossterm::event::{self, DisableFocusChange, EnableFocusChange, Eve
 use ratatui::crossterm::execute;
 use std::time::Duration;
 
+fn plugin_context_cwd(context: &str) -> Option<String> {
+    let value: serde_json::Value = serde_json::from_str(context).ok()?;
+    value["workspace_cwd"]
+        .as_str()
+        .or_else(|| value["focused_pane_cwd"].as_str())
+        .filter(|cwd| !cwd.is_empty())
+        .map(String::from)
+}
+
 fn main() -> std::io::Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if matches!(args.first().map(String::as_str), Some("--help" | "-h")) {
         println!("herdr-deck\n\nUSAGE:\n  herdr-deck");
+        return Ok(());
+    }
+    if args.first().map(String::as_str) == Some("--print-plugin-cwd") {
+        if let Ok(context) = std::env::var("HERDR_PLUGIN_CONTEXT_JSON")
+            && let Some(cwd) = plugin_context_cwd(&context)
+        {
+            println!("{cwd}");
+        }
         return Ok(());
     }
     if std::env::var("HERDR_ENV").as_deref() != Ok("1") {
@@ -55,4 +72,22 @@ fn main() -> std::io::Result<()> {
     let _ = execute!(std::io::stdout(), DisableFocusChange);
     ratatui::restore();
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::plugin_context_cwd;
+
+    #[test]
+    fn plugin_context_prefers_workspace_cwd() {
+        let context = r#"{
+            "workspace_cwd":"/repo",
+            "focused_pane_cwd":"/repo/subdir"
+        }"#;
+        assert_eq!(plugin_context_cwd(context).as_deref(), Some("/repo"));
+        assert_eq!(
+            plugin_context_cwd(r#"{"focused_pane_cwd":"/fallback"}"#).as_deref(),
+            Some("/fallback")
+        );
+    }
 }

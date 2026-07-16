@@ -1,0 +1,23 @@
+id = "herdr-deck"
+name = "herdr-deck"
+version = "0.1.0"
+description = "Opinionated agent deck manager for Herdr"
+min_herdr_version = "0.7.0"
+platforms = ["linux", "macos"]
+
+# Herdr builds the same release binary that `cargo install` would install.
+[[build]]
+command = ["cargo", "build", "--release", "--locked"]
+
+[[actions]]
+id = "open"
+title = "Open herdr-deck"
+description = "Browse, launch, and tear down agent deck workspaces."
+contexts = ["workspace"]
+command = ["bash", "scripts/open-deck.sh"]
+
+[[panes]]
+id = "picker"
+title = "herdr-deck"
+placement = "split"
+command = ["./target/release/herdr-deck"]

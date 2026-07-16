@@ -42,9 +42,11 @@ No daemon, no async runtime, one small binary.
   session alone (running it inside a pane would nest herdr in herdr).
 - **Open**: Enter on a live workspace focuses it. Enter on a worktree or
   directory opens a launch form: pick an agent (detected from your PATH,
-  using herdr's known-agent list), optionally name a branch (the worktree is
-  created via `wt switch` if needed), and go. herdr-deck builds a deck
-  workspace: editor + agent pane + full-width terminal + a lazygit tab.
+  using herdr's known-agent list), optionally enter a branch or Worktrunk
+  shortcut (`^`, `-`, `@`, `pr:N`, `mr:N`, or a PR/MR URL), and go.
+  Worktrunk creates or resolves the checkout, runs its lifecycle hooks, and
+  returns its path to herdr-deck. The resulting deck is an editor + agent pane
+  + full-width terminal + lazygit tab.
 - **Resume**: `ctrl-s` switches to a separate session-history source, so past
   conversations never pollute workspace/path search. Type searches the first
   prompt and project path; Tab filters by agent. Claude, Codex, and Pi sessions
@@ -57,6 +59,13 @@ No daemon, no async runtime, one small binary.
   when its branch is merged (worktrunk's `integrated`/`empty` state); an
   unmerged worktree gets an explicit force-remove confirmation instead.
   Removed paths are purged from zoxide.
+- **Clean up**: `ctrl-g` opens a separate cleanable-worktree source containing
+  every integrated/empty linked worktree found through the known repositories.
+  Clean entries show `✓`; integrated worktrees with staged, modified,
+  untracked, renamed, or deleted files show `!` and are never included in
+  batch removal. Filter the review list if desired, then `ctrl-x` removes all
+  visible clean entries after one count-and-project confirmation. Every entry
+  is revalidated immediately before removal and no force flags are used.
 
 ## Looking for something less opinionated?
 
@@ -74,8 +83,10 @@ thing you selected.
 
 ### Minimum
 
-- [Herdr](https://herdr.dev), with `herdr-deck` launched from inside a Herdr
-  session. It talks directly to Herdr's socket CLI and exits otherwise.
+- [Herdr](https://herdr.dev) 0.7.0 or newer, with `herdr-deck` launched from
+  inside a Herdr session. It talks directly to Herdr's socket CLI and exits
+  otherwise. Repository identity and linked-worktree state come from Herdr's
+  native worktree API, with Git as a compatibility fallback.
 - A Unix-like environment. The core local workflow is intended for macOS or
   Linux; shell command construction and agent discovery assume Unix paths and
   process behavior.
@@ -92,7 +103,7 @@ or modify Neovim plugins; the editor bridge is a separate conventional plugin.
 
 | feature | dependency | behavior when missing |
 |---|---|---|
-| linked-worktree create/remove | [worktrunk](https://github.com/max-sixty/worktrunk) (`wt`) | ordinary directory decks still work; worktree actions and status do not |
+| linked-worktree create/remove | [worktrunk](https://github.com/max-sixty/worktrunk) (`wt`) with JSON output | ordinary directory decks still work; worktree actions and status do not |
 | directory discovery | `zoxide` and/or `fd` | that source becomes sparse or empty |
 | directory preview | `eza`, with `ls` fallback | falls back to plain `ls -la` |
 | git tab | `lazygit` | the tab is still created, but its command fails |
@@ -188,7 +199,32 @@ acceptable.
 
 ## Install
 
-Straight from GitHub (no clone needed):
+### Native Herdr plugin
+
+Herdr can install the repository, build the release binary, and expose its
+`herdr-deck.open` action:
+
+```sh
+herdr plugin install ctbaum/herdr-deck
+```
+
+Bind that action in `~/.config/herdr/config.toml`:
+
+```toml
+[[keys.command]]
+key = "prefix+o"
+type = "plugin_action"
+command = "herdr-deck.open"
+description = "Open herdr-deck"
+```
+
+The plugin action uses Herdr's injected workspace context, so the temporary
+picker pane starts at the workspace root. Plugin installation requires Cargo
+because Herdr builds the Rust binary from source.
+
+### Standalone binary
+
+Install straight from GitHub (no clone needed):
 
 ```sh
 cargo install --git https://github.com/ctbaum/herdr-deck
@@ -202,9 +238,9 @@ cd herdr-deck
 cargo install --path .
 ```
 
-Either way the binary lands in `~/.cargo/bin` (make sure that's on your PATH).
-Install herdr-agents.nvim with your Neovim plugin manager as described above,
-then bind the binary in `~/.config/herdr/config.toml`:
+Either standalone route puts the binary in `~/.cargo/bin` (make sure that's on
+your `PATH`). Install herdr-agents.nvim with your Neovim plugin manager as
+described above, then bind the binary directly:
 
 ```toml
 [[keys.command]]
@@ -213,8 +249,8 @@ type = "pane"
 command = "herdr-deck"
 ```
 
-herdr-deck exits when its pane loses focus, so the temporary pane never sticks
-around.
+Both installation modes run the same binary. herdr-deck exits when its pane
+loses focus, so the temporary pane never sticks around.
 
 ## Keys
 
@@ -223,9 +259,11 @@ around.
 | type | filter (esc clears) |
 | `↵` | focus workspace / open remote window / launch form / resume session |
 | `ctrl-s` | switch projects / past sessions source |
+| `ctrl-g` | toggle cleanable integrated-worktree source |
 | `tab` / `shift-tab` | sessions: cycle agent filter |
 | `ctrl-n` | new directory, then launch form |
 | `ctrl-d` | close workspace / merge-gated worktree remove |
+| `ctrl-x` | cleanable source: remove all visible clean entries |
 | `ctrl-r` | reload |
 | `ctrl-j/k` | move selection (needs passthrough, see below) |
 | `?` | help |
@@ -256,9 +294,12 @@ git tab is empty; without herdr-agents.nvim, Claude/Codex decks contain only nvi
 and selecting an agent normally launches it with its unsafe/yolo mode enabled.
 These are current design choices, not graceful optional paths.
 
-Worktrees are recognised structurally — any directory whose `.git` is a
-file (a linked git worktree) — so any worktrunk `worktree-path` layout
-works.
+Worktree discovery is structural—any directory whose `.git` is a file—so any
+Worktrunk `worktree-path` layout works. Once selected, Worktrunk's JSON result
+is authoritative for the checkout path and Herdr's native worktree metadata is
+authoritative for repository identity. Removing a checkout also closes any
+dedicated Herdr workspace rooted there; mixed workspaces lose only panes rooted
+inside the removed checkout.
 
 If any of these bite you, open an issue — making them configurable is the
 obvious next step.

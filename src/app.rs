@@ -14,6 +14,7 @@ pub enum EntryKind {
     Workspace { id: String, status: String },
     Remote(String), // ssh alias from $HERDR_DECK_REMOTES; opens herdr --remote
     Worktree(PathBuf),
+    Cleanable { path: PathBuf, clean: bool },
     Dir(PathBuf),
     Session(Session),
 }
@@ -29,6 +30,7 @@ impl Entry {
         match &self.kind {
             EntryKind::Workspace { id, .. } => format!("w:{id}"),
             EntryKind::Session(s) => format!("s:{}:{}", s.agent.id(), s.id),
+            EntryKind::Cleanable { path, .. } => format!("c:{}", path.to_string_lossy()),
             _ => format!("d:{}", self.label),
         }
     }
@@ -40,6 +42,9 @@ impl Entry {
                     match_indices(s.agent.id(), filter).is_some()
                         || match_indices(&s.cwd.to_string_lossy(), filter).is_some()
                 }
+                EntryKind::Cleanable { path, .. } => {
+                    match_indices(&path.to_string_lossy(), filter).is_some()
+                }
                 _ => false,
             }
     }
@@ -49,6 +54,7 @@ impl Entry {
 pub enum Source {
     Projects,
     Sessions,
+    Cleanup,
 }
 
 pub struct LaunchForm {
@@ -64,6 +70,7 @@ pub enum DelAction {
     RemoveMerged(PathBuf),
     OfferForce(PathBuf, String), // path, branch — 'f' arms the force stage
     ForceArmed(PathBuf, String),
+    RemoveAll(Vec<PathBuf>),
 }
 
 pub enum Mode {
@@ -188,6 +195,20 @@ impl App {
                         kind: EntryKind::Session(session),
                     }));
             }
+            Source::Cleanup => {
+                self.entries
+                    .extend(
+                        ext::integrated_worktrees()
+                            .into_iter()
+                            .map(|worktree| Entry {
+                                label: format!("{}/{}", worktree.project, worktree.branch),
+                                kind: EntryKind::Cleanable {
+                                    path: worktree.path,
+                                    clean: worktree.clean,
+                                },
+                            }),
+                    );
+            }
         }
         self.invalidate_previews();
         self.apply_filter();
@@ -280,10 +301,20 @@ impl App {
             }
             KeyCode::Enter => self.open_selected(),
             KeyCode::Char('s') if ctrl => {
-                self.source = if self.source == Source::Projects {
-                    Source::Sessions
-                } else {
+                self.source = match self.source {
+                    Source::Sessions => Source::Projects,
+                    Source::Projects | Source::Cleanup => Source::Sessions,
+                };
+                self.session_agent = None;
+                self.filter.clear();
+                self.selected = 0;
+                self.reload();
+            }
+            KeyCode::Char('g') if ctrl => {
+                self.source = if self.source == Source::Cleanup {
                     Source::Projects
+                } else {
+                    Source::Cleanup
                 };
                 self.session_agent = None;
                 self.filter.clear();
@@ -294,6 +325,9 @@ impl App {
             KeyCode::BackTab if self.source == Source::Sessions => self.cycle_session_agent(-1),
             KeyCode::Char('n') if ctrl => self.mode = Mode::NewPath { input: "~/".into() },
             KeyCode::Char('d') if ctrl => self.delete_selected(),
+            KeyCode::Char('x') if ctrl && self.source == Source::Cleanup => {
+                self.confirm_remove_all()
+            }
             KeyCode::Char('r') if ctrl => self.reload(),
             KeyCode::Char('?') if self.filter.is_empty() => self.mode = Mode::Help,
             KeyCode::Backspace => {
@@ -321,7 +355,7 @@ impl App {
                 ext::open_remote(host);
                 self.quit = true;
             }
-            EntryKind::Worktree(p) | EntryKind::Dir(p) => {
+            EntryKind::Worktree(p) | EntryKind::Cleanable { path: p, .. } | EntryKind::Dir(p) => {
                 self.mode = Mode::Launch(LaunchForm {
                     dir: p.clone(),
                     agent: self.default_agent(),
@@ -402,10 +436,59 @@ impl App {
                     };
                 }
             }
+            EntryKind::Cleanable { path, clean } => {
+                if *clean {
+                    self.mode = Mode::ConfirmDelete {
+                        msg: format!("remove clean integrated worktree {}?", entry.label),
+                        action: DelAction::RemoveMerged(path.clone()),
+                    };
+                } else {
+                    self.status =
+                        Some("integrated, but dirty; clean the worktree before removal".into());
+                }
+            }
             EntryKind::Dir(_) | EntryKind::Remote(_) | EntryKind::Session(_) => {
                 self.status = Some("not a workspace or worktree; nothing to delete".into());
             }
         }
+    }
+
+    fn confirm_remove_all(&mut self) {
+        let mut paths = Vec::new();
+        let mut projects = HashSet::new();
+        let mut dirty = 0;
+        for &index in &self.filtered {
+            let entry = &self.entries[index];
+            if let EntryKind::Cleanable { path, clean } = &entry.kind {
+                if *clean {
+                    paths.push(path.clone());
+                    projects.insert(entry.label.split('/').next().unwrap_or(""));
+                } else {
+                    dirty += 1;
+                }
+            }
+        }
+        if paths.is_empty() {
+            self.status = Some(if dirty == 0 {
+                "no clean integrated worktrees in this view".into()
+            } else {
+                format!("no removable worktrees; {dirty} integrated worktrees are dirty")
+            });
+            return;
+        }
+        let skipped = if dirty == 0 {
+            String::new()
+        } else {
+            format!("; {dirty} dirty will be skipped")
+        };
+        self.mode = Mode::ConfirmDelete {
+            msg: format!(
+                "remove {} clean integrated worktrees across {} projects{skipped}?",
+                paths.len(),
+                projects.len()
+            ),
+            action: DelAction::RemoveAll(paths),
+        };
     }
 
     fn key_confirm_delete(&mut self, key: KeyEvent) {
@@ -427,6 +510,14 @@ impl App {
                 } else {
                     "wt remove failed (dirty tree?)".into()
                 });
+                self.reload();
+            }
+            (KeyCode::Char('y'), DelAction::RemoveAll(paths)) => {
+                let result = ext::wt_remove_clean(&paths);
+                self.status = Some(format!(
+                    "removed {} · skipped {} · failed {}",
+                    result.removed, result.skipped, result.failed
+                ));
                 self.reload();
             }
             (KeyCode::Char('f'), DelAction::OfferForce(p, branch)) => {

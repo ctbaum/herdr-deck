@@ -13,7 +13,7 @@ pub fn compute(entry: &Entry, w: u16, h: u16, own_pane: &str) -> Text<'static> {
     match &entry.kind {
         EntryKind::Workspace { id, .. } => thumbnail(id, w as usize, h as usize, own_pane),
         EntryKind::Remote(host) => remote(host),
-        EntryKind::Worktree(p) => worktree(p),
+        EntryKind::Worktree(p) | EntryKind::Cleanable { path: p, .. } => worktree(p),
         EntryKind::Dir(p) => listing(p),
         EntryKind::Session(s) => session(s),
     }
@@ -84,6 +84,12 @@ fn worktree(p: &Path) -> Text<'static> {
         }
         if i.untracked {
             dirty.push("untracked");
+        }
+        if i.renamed {
+            dirty.push("renamed");
+        }
+        if i.deleted {
+            dirty.push("deleted");
         }
         let dirty = if dirty.is_empty() {
             "clean".to_string()
