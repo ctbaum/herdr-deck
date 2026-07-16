@@ -4,17 +4,17 @@
 
 # herdr-deck
 
-An opinionated deck manager for [herdr](https://herdr.dev): one picker to browse,
-launch, and tear down agent workspaces bound to git worktrees.
+An opinionated deck manager for [Herdr](https://herdr.dev): one picker to browse,
+launch, and tear down agent workspaces bound to Git worktrees.
 
-herdr-deck runs inside a herdr pane and drives everything by shelling out to the
+herdr-deck runs inside a Herdr pane and drives everything by shelling out to the
 `herdr` and [`wt` (worktrunk)](https://github.com/max-sixty/worktrunk) CLIs.
 No daemon, no async runtime, one small binary.
 
 > [!IMPORTANT]
 > This is my personal workflow extracted into a public binary, not a generic
 > Herdr workspace manager. The picker is reusable; the deck it builds is
-> deliberately coupled to my nvim, agent, and terminal setup. Read
+> deliberately coupled to my Neovim, agent, and terminal setup. Read
 > [Requirements and compatibility](#requirements-and-compatibility) before
 > installing.
 
@@ -31,18 +31,18 @@ No daemon, no async runtime, one small binary.
 
 ## What it does
 
-- **Browse**: live herdr workspaces first (agents blocked on you sort to the
+- **Browse**: live Herdr workspaces first (agents blocked on you sort to the
   top), then worktrunk worktrees, then your zoxide directories. Type to
   filter. The preview shows a live 2D thumbnail of each workspace's actual
   pane layout, or worktree status (branch, merge state, dirty flags), or a
   directory listing.
-- **Remotes**: set `HERDR_DECK_REMOTES` to a comma/space-separated list of ssh
-  aliases and each remote herdr server becomes an entry (`⇄`); Enter opens a
+- **Remotes**: set `HERDR_DECK_REMOTES` to a comma/space-separated list of SSH
+  aliases and each remote Herdr server becomes an entry (`⇄`); Enter opens a
   `herdr --remote` thin client in its own terminal window, leaving the local
-  session alone (running it inside a pane would nest herdr in herdr).
+  session alone. Running it inside a pane would nest Herdr in Herdr.
 - **Open**: Enter on a live workspace focuses it. Enter on a worktree or
-  directory opens a launch form: pick an agent (detected from your PATH,
-  using herdr's known-agent list), optionally enter a branch or Worktrunk
+  directory opens a launch form: pick an agent (found on your `PATH` from
+  Herdr's known-agent list), optionally enter a branch or Worktrunk
   shortcut (`^`, `-`, `@`, `pr:N`, `mr:N`, or a PR/MR URL), and go.
   Worktrunk creates or resolves the checkout, runs its lifecycle hooks, and
   returns its path to herdr-deck. The resulting deck is an editor + agent pane
@@ -52,7 +52,7 @@ No daemon, no async runtime, one small binary.
   prompt and project path; Tab filters by agent. Claude, Codex, and Pi sessions
   resume in a recreated deck rooted at the session's original directory.
   Cursor opens its native session picker in that deck because its CLI does
-  not expose an enumerable local history store.
+  not expose a queryable local history store.
 - **Create**: `ctrl-n` prompts for a new directory. A new worktree in an
   existing repo is just Enter on the repo plus the branch field.
 - **Destroy**: `ctrl-d` closes a workspace, or removes a worktree — but only
@@ -75,9 +75,9 @@ sessions, remotes, directories, and actions. Sources can be disabled, custom
 command/JSON integrations can be added without changing Rust, and missing
 optional tools degrade quietly.
 
-The distinction is mostly intent: Herdr Navigator helps you **jump to
-anything**; herdr-deck recreates **my particular working deck** around the
-thing you selected.
+The distinction is intent: Herdr Navigator helps you **jump to anything**;
+herdr-deck recreates **my particular working deck** around the workspace,
+session, worktree, or directory you selected.
 
 ## Requirements and compatibility
 
@@ -107,16 +107,16 @@ or modify Neovim plugins; the editor bridge is a separate conventional plugin.
 | directory discovery | `zoxide` and/or `fd` | that source becomes sparse or empty |
 | directory preview | `eza`, with `ls` fallback | falls back to plain `ls -la` |
 | git tab | `lazygit` | the tab is still created, but its command fails |
-| Claude deck | Claude Code CLI + [herdr-agents.nvim](https://github.com/ctbaum/herdr-agents.nvim) + claudecode.nvim | nvim opens, but Claude does not auto-start |
-| Codex deck | Codex CLI + [herdr-agents.nvim](https://github.com/ctbaum/herdr-agents.nvim) + codex.nvim | nvim opens, but Codex does not auto-start |
-| connection-true pane identity | `pgrep`, `ps` or Linux `/proc`, `grep`, `sed`, `tr`, `sh` | same-tab geometry remains as a startup fallback |
+| Claude deck | Claude Code CLI + [herdr-agents.nvim](https://github.com/ctbaum/herdr-agents.nvim) + claudecode.nvim | `nvim` opens, but Claude does not auto-start |
+| Codex deck | Codex CLI + [herdr-agents.nvim](https://github.com/ctbaum/herdr-agents.nvim) + codex.nvim | `nvim` opens, but Codex does not auto-start |
+| agent-pane identification | `pgrep`, `ps` or Linux `/proc`, `grep`, `sed`, `tr`, `sh` | same-tab geometry remains as a startup fallback |
 | saved sessions | agent-owned local history files | only histories found at the supported hardcoded locations appear |
 | remote entries | macOS `open` + Ghostty | remote launch is unavailable on other terminals/platforms |
 
-Saved-session discovery currently reads `~/.claude/projects`,
-`~/.codex/sessions`, and `~/.pi/agent/sessions`. Cursor exposes discovery only
-through its own picker, so herdr-deck opens `cursor-agent ls`. These are
-agent-owned storage formats and may change underneath herdr-deck.
+herdr-deck currently reads saved sessions from `~/.claude/projects`,
+`~/.codex/sessions`, and `~/.pi/agent/sessions`. Cursor exposes its sessions
+only through its own picker, so herdr-deck opens `cursor-agent ls`. The agents
+own these storage formats and may change them without notice.
 
 ### Neovim integration
 
@@ -147,7 +147,7 @@ return {
 The plugin manager owns installation, updates, pins, and removal. Existing
 dependency checkouts are reused rather than duplicated. If those upstream
 plugins already have specs in your configuration, keep one spec for each and
-avoid calling their ordinary `setup()` inside Herdr—the bridge supplies the
+avoid calling their usual `setup()` inside Herdr—the bridge supplies the
 terminal providers there. Outside Herdr, retain their normal configuration.
 
 herdr-agents.nvim installs **no key mappings** and reserves no leader namespace.
@@ -155,24 +155,28 @@ It exposes the upstream `:ClaudeCode*` and `:Codex*` commands plus
 `:ClaudeHerdrSendSelection` and `:ClaudeHerdrSendDiagnostics`; users bind only
 what they want. Run `:checkhealth herdr-agents` for local diagnostics.
 
-The active package supplies the complete sibling-pane
-behavior: external terminal providers, IDE environment forwarding, prompt
-readiness waits, connection-port/process identity, same-tab fallback, agent
-focus/send operations, selection and diagnostics forwarding, native diff
-commands, and duplicate-agent protection. Connection-true identity inspects
-local process environments using `pgrep` plus `ps`, or `/proc` on Linux; launch
-arguments and IDE environment variables are forwarded into the new Herdr pane.
+herdr-agents.nvim provides the editor-side integration:
+
+- external terminal providers and IDE environment forwarding;
+- prompt-readiness waits and a same-tab startup fallback;
+- agent focus, send, selection, diagnostics, and native diff commands; and
+- duplicate-agent protection.
+
+To identify the correct agent pane after startup, the plugin matches the IDE
+connection details against local process environments. It reads them with
+`pgrep` and `ps`, or from `/proc` on Linux. herdr-deck forwards the launch
+arguments and IDE environment variables to the new Herdr pane.
 
 | variable | value set by herdr-deck |
 |---|---|
 | `HERDR_NVIM_AGENT` | `claude` or `codex` |
 | `HERDR_NVIM_AGENT_ARGS_JSON` | JSON array containing the dangerous-mode flag when enabled and any saved-session resume arguments |
 
-This ordering is intentional: both plugins create an editor-side server and
+This ordering matters: both plugins create an editor-side server and
 pass connection variables to the agent process. Starting the CLI independently
-at the same time as nvim introduces a race and can leave the agent running with
-no IDE connection. The binary only sets this launch contract; all editor-side
-behavior belongs to herdr-agents.nvim.
+at the same time as Neovim introduces a race and can leave the agent running
+with no IDE connection. The binary only sets this launch contract; all
+editor-side behavior belongs to herdr-agents.nvim.
 
 The shell-readiness match defaults to `➜`. If your prompt does not contain that
 symbol, set `HERDR_NVIM_PROMPT_MATCH` to stable text from your prompt; the agent
@@ -224,7 +228,7 @@ because Herdr builds the Rust binary from source.
 
 ### Standalone binary
 
-Install straight from GitHub (no clone needed):
+Install directly from GitHub (no clone needed):
 
 ```sh
 cargo install --git https://github.com/ctbaum/herdr-deck
@@ -256,7 +260,7 @@ loses focus, so the temporary pane never sticks around.
 
 | key | action |
 |-----|--------|
-| type | filter (esc clears) |
+| type | filter (`esc` clears) |
 | `↵` | focus workspace / open remote window / launch form / resume session |
 | `ctrl-s` | switch projects / past sessions source |
 | `ctrl-g` | toggle cleanable integrated-worktree source |
@@ -269,7 +273,7 @@ loses focus, so the temporary pane never sticks around.
 | `?` | help |
 | `esc` | back / quit |
 
-If you use a herdr Ctrl-hjkl pane-navigation plugin (e.g.
+If you use a Herdr Ctrl-H/J/K/L pane-navigation plugin (for example,
 vim-herdr-navigation), add `herdr-deck` to its passthrough list so `ctrl-j/k`
 reach the picker:
 
@@ -283,18 +287,15 @@ herdr-deck mirrors my own personal workflow and layout:
 
 - the deck layout is fixed: editor top-left, agent top-right, terminal
   bottom, lazygit on a new unfocused tab;
-- `claude` and `codex` are special-cased to start through nvim and their IDE
-  plugins, using the environment contract above; I plan to add pi and open code next.
-- the "dangerous" toggle knows each agent's own yolo mechanism (flag or env)
-  from a built-in table, and is **on by default**; unknown agents get no toggle;
+- `claude` and `codex` are special-cased to start through Neovim and their IDE
+  plugins, using the environment contract above; I plan to add Pi and OpenCode
+  next.
 - remote entries spawn their window via macOS `open` + Ghostty, hardcoded.
 
-In practical terms: without nvim, deck launch is broken; without lazygit, the
-git tab is empty; without herdr-agents.nvim, Claude/Codex decks contain only nvim;
-and selecting an agent normally launches it with its unsafe/yolo mode enabled.
-These are current design choices, not graceful optional paths.
+The dependency table above describes the available fallbacks. The fixed layout
+and remote launcher are current design choices, not configurable paths.
 
-Worktree discovery is structural—any directory whose `.git` is a file—so any
+herdr-deck recognizes any directory with a `.git` file as a worktree, so any
 Worktrunk `worktree-path` layout works. Once selected, Worktrunk's JSON result
 is authoritative for the checkout path and Herdr's native worktree metadata is
 authoritative for repository identity. Removing a checkout also closes any
