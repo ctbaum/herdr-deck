@@ -1,7 +1,7 @@
 id = "herdr-deck"
 name = "herdr-deck"
 version = "0.1.0"
-description = "Opinionated agent deck manager for Herdr"
+description = "A Herdr picker for discovering, launching, resuming, and safely cleaning up agent workspaces, worktrees, sessions, and remote servers."
 min_herdr_version = "0.7.0"
 platforms = ["linux", "macos"]
 
