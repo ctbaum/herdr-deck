@@ -2,7 +2,7 @@
 name = "herdr-deck"
 version = "0.1.0"
 edition = "2024"
-description = "Lazy deck manager for herdr: browse, launch, and tear down agent workspaces bound to git worktrees"
+description = "Companion workspace launcher for herdr-agents.nvim: open Claude and Codex in ready-made Herdr decks"
 license = "MIT"
 repository = "https://github.com/ctbaum/herdr-deck"
 

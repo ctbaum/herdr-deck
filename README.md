@@ -4,12 +4,17 @@
 
 # herdr-deck
 
-An opinionated deck manager for [Herdr](https://herdr.dev): one picker to browse,
-launch, and tear down agent workspaces bound to Git worktrees.
+The companion workspace launcher for
+[herdr-agents.nvim](https://github.com/ctbaum/herdr-agents.nvim): choose a
+project, Git worktree, or saved Claude/Codex session and open it as a ready-made
+[Herdr](https://herdr.dev) deck with Neovim, a connected agent, a shell, and
+lazygit.
 
 herdr-deck runs inside a Herdr pane and drives everything by shelling out to the
 `herdr` and [`wt` (worktrunk)](https://github.com/max-sixty/worktrunk) CLIs.
-No daemon, no async runtime, one small binary.
+herdr-agents.nvim keeps Claude or Codex connected to the editor; herdr-deck
+recreates the whole workspace around that integration. No daemon, no async
+runtime, one small binary.
 
 > [!IMPORTANT]
 > This is my personal workflow extracted into a public binary, not a generic
