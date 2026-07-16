@@ -274,7 +274,7 @@ vim-herdr-navigation), add `herdr-deck` to its passthrough list so `ctrl-j/k`
 reach the picker:
 
 ```sh
-export HERDR_NAV_PASSTHROUGH_RE='^(tv|lazygit|herdr-deck)$'
+export HERDR_NAV_PASSTHROUGH_RE='^(lazygit|herdr-deck)$'
 ```
 
 ## Opinionated setup and compatibility
@@ -284,7 +284,7 @@ herdr-deck mirrors my own personal workflow and layout:
 - the deck layout is fixed: editor top-left, agent top-right, terminal
   bottom, lazygit on a new unfocused tab;
 - `claude` and `codex` are special-cased to start through nvim and their IDE
-  plugins, using the environment contract above;
+  plugins, using the environment contract above; I plan to add pi and open code next.
 - the "dangerous" toggle knows each agent's own yolo mechanism (flag or env)
   from a built-in table, and is **on by default**; unknown agents get no toggle;
 - remote entries spawn their window via macOS `open` + Ghostty, hardcoded.
@@ -301,5 +301,6 @@ authoritative for repository identity. Removing a checkout also closes any
 dedicated Herdr workspace rooted there; mixed workspaces lose only panes rooted
 inside the removed checkout.
 
-If any of these bite you, open an issue — making them configurable is the
-obvious next step.
+These constraints are part of herdr-deck's current opinionated scope. Issues
+describing broader workflows are welcome, but configurability is not
+guaranteed.
