@@ -1,0 +1,4 @@
+# Rebuild the release binary after a merge lands. Runs in the target branch's
+# worktree (the plugin root), keeping the herdr plugin entrypoint current
+# without a manual build step.
+post-merge = "cargo build --release --locked"
