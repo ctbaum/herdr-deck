@@ -1,6 +1,7 @@
 //! Subprocess wrappers around herdr / wt / zoxide / fd / git, plus the
 //! opinionated deck builder.
 
+use crate::editor;
 use crate::sessions::{Agent as SessionAgent, Session};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
@@ -94,6 +95,7 @@ pub fn focus_workspace(id: &str) {
 }
 
 pub fn close_workspace(id: &str) {
+    editor::stop_workspace(id);
     out(&["herdr", "workspace", "close", id]);
 }
 
@@ -1088,10 +1090,7 @@ fn launch_deck_inner(
         Some("codex") => codex_launch_args(resume, dangerous),
         _ => Vec::new(),
     };
-    let launch_args = serde_json::to_string(&launch_args)
-        .map_err(|error| format!("could not encode editor-agent arguments: {error}"))?;
-    let launch_args = format!("HERDR_NVIM_AGENT_ARGS_JSON={launch_args}");
-    let mut create: Vec<&str> = vec![
+    let create: Vec<&str> = vec![
         "herdr",
         "workspace",
         "create",
@@ -1101,11 +1100,6 @@ fn launch_deck_inner(
         &label,
         "--no-focus",
     ];
-    if agent == Some("claude") {
-        create.extend(["--env", "HERDR_NVIM_AGENT=claude", "--env", &launch_args]);
-    } else if agent == Some("codex") {
-        create.extend(["--env", "HERDR_NVIM_AGENT=codex", "--env", &launch_args]);
-    }
     let created = json(&create).ok_or("herdr workspace create failed")?;
     let root_pane = &created["result"]["root_pane"];
     let ws = root_pane["workspace_id"]
@@ -1133,12 +1127,10 @@ fn launch_deck_inner(
         "--no-focus",
     ]);
 
-    match agent {
+    let agent_pane = match agent {
         // Editor-integrated agents are spawned by nvim after their IDE server
-        // starts (env above). None gets the same layout with plain nvim.
-        Some("claude") | Some("codex") | None => {
-            out(&["herdr", "pane", "run", root, "nvim"]);
-        }
+        // starts. None gets the same layout with plain nvim.
+        Some("claude") | Some("codex") | None => None,
         // Every other agent gets its own pane on the top-right. Dangerous is
         // agent-specific (AGENTS table): append a flag, or prefix an env.
         Some(a) => {
@@ -1162,12 +1154,26 @@ fn launch_deck_inner(
             let agent_pane = split["result"]["pane"]["pane_id"]
                 .as_str()
                 .ok_or("no pane_id in split result")?;
-            out(&["herdr", "pane", "run", root, "nvim"]);
-            out(&["herdr", "pane", "run", agent_pane, &cmd]);
+            Some((agent_pane.to_string(), cmd))
         }
+    };
+
+    // Build the whole root-tab layout before Neovim starts. The editor plugin
+    // may immediately create its own agent split once its IDE server is ready.
+    let editor_command =
+        match editor::prepare_editor(ws, root_tab, root, &target, agent, &launch_args) {
+            Ok(command) => command,
+            Err(error) => {
+                close_workspace(ws);
+                return Err(error);
+            }
+        };
+    out(&["herdr", "pane", "run", root, &editor_command]);
+    if let Some((agent_pane, command)) = agent_pane {
+        out(&["herdr", "pane", "run", &agent_pane, &command]);
     }
 
-    // Unfocused lazygit tab — one keystroke away, out of the way.
+    // Unfocused lazygit tab: one keystroke away, out of the way.
     if let Some(tab) = json(&[
         "herdr",
         "tab",

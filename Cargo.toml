@@ -7,6 +7,8 @@ license = "MIT"
 repository = "https://github.com/ctbaum/herdr-deck"
 
 [dependencies]
+libc = "0.2"
 ratatui = "0.30.2"
+serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = "0.9"

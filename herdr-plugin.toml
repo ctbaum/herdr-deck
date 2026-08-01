@@ -2,12 +2,15 @@ id = "herdr-deck"
 name = "herdr-deck"
 version = "0.1.0"
 description = "The companion workspace launcher for herdr-agents.nvim: open or resume Claude and Codex in a ready-made Neovim, agent, shell, and lazygit deck."
-min_herdr_version = "0.7.0"
+min_herdr_version = "0.7.5"
 platforms = ["linux", "macos"]
 
 # Herdr builds the same release binary that `cargo install` would install.
 [[build]]
 command = ["cargo", "build", "--release", "--locked"]
+
+[[startup]]
+command = ["bash", "-c", "exec \"$HERDR_PLUGIN_ROOT/target/release/herdr-deck\" --restore-editors"]
 
 [[actions]]
 id = "open"
@@ -23,9 +26,35 @@ description = "Switch directly between the two most recently visited projects."
 contexts = ["workspace"]
 command = ["bash", "-c", "exec \"$HERDR_PLUGIN_ROOT/target/release/herdr-deck\" --toggle-project"]
 
+[[actions]]
+id = "open-link"
+title = "Open file in deck editor"
+description = "Open a clicked agent file path in the existing Neovim deck pane."
+command = ["bash", "-c", "exec \"$HERDR_PLUGIN_ROOT/target/release/herdr-deck\" --open-link"]
+
+[[link_handlers]]
+id = "file-path"
+title = "Open in deck editor"
+pattern = '^~?[\w.@/()\[\]+-]+/[\w.@()\[\]+-]+\.[A-Za-z]\w*(?::\d+){0,2}$'
+action = "open-link"
+
+[[link_handlers]]
+id = "file-url"
+title = "Open in deck editor"
+pattern = '^file://'
+action = "open-link"
+
 [[events]]
 on = "workspace.focused"
 command = ["bash", "-c", "exec \"$HERDR_PLUGIN_ROOT/target/release/herdr-deck\" --record-workspace-focus"]
+
+[[events]]
+on = "workspace.closed"
+command = ["bash", "-c", "exec \"$HERDR_PLUGIN_ROOT/target/release/herdr-deck\" --cleanup-editor-event"]
+
+[[events]]
+on = "pane.closed"
+command = ["bash", "-c", "exec \"$HERDR_PLUGIN_ROOT/target/release/herdr-deck\" --cleanup-editor-event"]
 
 [[panes]]
 id = "picker"
