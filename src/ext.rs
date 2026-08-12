@@ -53,8 +53,8 @@ pub struct Ws {
     pub status: String,
 }
 
-/// Live workspaces, blocked agents first, then clustered by project basename
-/// in first-appearance order.
+/// Live workspaces, agents needing attention first (blocked, then done),
+/// then clustered by project basename in first-appearance order.
 pub fn workspaces() -> Vec<Ws> {
     let Some(v) = json(&["herdr", "workspace", "list"]) else {
         return vec![];
@@ -76,7 +76,11 @@ pub fn workspaces() -> Vec<Ws> {
         first.entry(g).or_insert(i);
     }
     ws.sort_by_key(|w| {
-        let rank = if w.status == "blocked" { 0 } else { 1 };
+        let rank = match w.status.as_str() {
+            "blocked" => 0,
+            "done" => 1,
+            _ => 2,
+        };
         let g = w.label.split('/').next().unwrap_or("");
         (rank, first.get(g).copied().unwrap_or(usize::MAX))
     });
