@@ -1094,7 +1094,10 @@ fn launch_deck_inner(
         Some("codex") => codex_launch_args(resume, dangerous),
         _ => Vec::new(),
     };
-    let create: Vec<&str> = vec![
+    let args_json = serde_json::to_string(&launch_args)
+        .map_err(|error| format!("could not encode editor-agent arguments: {error}"))?;
+    let args_env = format!("HERDR_NVIM_AGENT_ARGS_JSON={args_json}");
+    let mut create: Vec<&str> = vec![
         "herdr",
         "workspace",
         "create",
@@ -1104,6 +1107,11 @@ fn launch_deck_inner(
         &label,
         "--no-focus",
     ];
+    if agent == Some("claude") {
+        create.extend(["--env", "HERDR_NVIM_AGENT=claude", "--env", &args_env]);
+    } else if agent == Some("codex") {
+        create.extend(["--env", "HERDR_NVIM_AGENT=codex", "--env", &args_env]);
+    }
     let created = json(&create).ok_or("herdr workspace create failed")?;
     let root_pane = &created["result"]["root_pane"];
     let ws = root_pane["workspace_id"]
@@ -1164,14 +1172,13 @@ fn launch_deck_inner(
 
     // Build the whole root-tab layout before Neovim starts. The editor plugin
     // may immediately create its own agent split once its IDE server is ready.
-    let editor_command =
-        match editor::prepare_editor(ws, root_tab, root, &target, agent, &launch_args) {
-            Ok(command) => command,
-            Err(error) => {
-                close_workspace(ws);
-                return Err(error);
-            }
-        };
+    let editor_command = match editor::prepare_editor(ws, root, &target, agent, &launch_args) {
+        Ok(command) => command,
+        Err(error) => {
+            close_workspace(ws);
+            return Err(error);
+        }
+    };
     out(&["herdr", "pane", "run", root, &editor_command]);
     if let Some((agent_pane, command)) = agent_pane {
         out(&["herdr", "pane", "run", &agent_pane, &command]);

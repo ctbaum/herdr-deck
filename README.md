@@ -13,8 +13,7 @@ lazygit.
 herdr-deck runs inside a Herdr pane and drives everything by shelling out to the
 `herdr` and [`wt` (worktrunk)](https://github.com/max-sixty/worktrunk) CLIs.
 herdr-agents.nvim keeps Claude or Codex connected to the editor; herdr-deck
-recreates the whole workspace around that integration. A small detached Neovim
-daemon preserves each open editor while the Herdr server is stopped.
+recreates the whole workspace around that integration.
 
 > [!IMPORTANT]
 > This is my personal workflow extracted into a public binary, not a generic
@@ -196,20 +195,17 @@ Herdr 0.7.5 owns shell-readiness waiting and verifies that the requested agent
 becomes interactive. Set `HERDR_NVIM_AGENT_START_TIMEOUT` to change the default
 30-second startup timeout.
 
-### Editor persistence
+### Editor recovery
 
-The native plugin starts one detached Neovim daemon per deck workspace and
-connects the editor pane with Neovim's `--remote-ui` mode. Listener paths are
-stable within a named Herdr session and are stored with the workspace record in
-the plugin state directory. Herdr's startup hook restores those pane
-connections after a server restart. If the Neovim process did not survive, the
-hook starts a fresh editor and reports that the in-memory state was unavailable.
+Each deck editor runs Neovim directly in its pane with `--listen` on a
+workspace-scoped socket, recorded in the plugin state directory. The socket
+lets clicked file links in agent output open in the existing editor. After a
+Herdr server restart, the startup hook starts a fresh Neovim (with the same
+agent launch contract) in every recorded deck pane whose editor is gone.
 
-Closing the deck workspace or its editor pane stops the daemon and removes its
-record. A machine restart, forced process termination, or Neovim crash cannot
-preserve live in-memory state. Agent reconnection requires a version of
-herdr-agents.nvim that exposes `pane()` and `reconnect()`; without it, the
-editor still restores but the agent must be opened manually.
+Editor state is deliberately not preserved across restarts: swapfiles and
+session plugins already cover that inside Neovim, and agent conversations
+resume from the herdr-deck session picker.
 
 ### Environment variables
 
@@ -217,7 +213,7 @@ editor still restores but the agent must be opened manually.
 |---|---|---|
 | `HERDR_NVIM_AGENT`, `HERDR_NVIM_AGENT_ARGS_JSON` | herdr-deck → workspace | launcher-neutral editor-agent startup contract described above |
 | `HERDR_DECK_REMOTES` | user → herdr-deck | comma/space-separated SSH aliases shown as remote entries |
-| `HERDR_DECK_RUNTIME_DIR` | user → herdr-deck | optional parent directory for persistent Neovim listener sockets |
+| `HERDR_DECK_RUNTIME_DIR` | user → herdr-deck | optional parent directory for Neovim listener sockets |
 | `HERDR_NVIM_AGENT_START_TIMEOUT` | user → Neovim adapter | `herdr agent start` timeout in milliseconds; defaults to `30000` |
 | `HERDR_NAV_PASSTHROUGH_RE` | user → navigation plugin | lets `ctrl-j/k` reach herdr-deck when using seamless pane navigation |
 | `HERDR_*` | Herdr → processes | inherited session/socket identity; scrubbed only when opening a remote Ghostty window |

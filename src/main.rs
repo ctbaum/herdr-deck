@@ -40,7 +40,6 @@ fn main() -> std::io::Result<()> {
     let plugin_command = match args.first().map(String::as_str) {
         Some("--open-link") => Some(editor::open_clicked_link()),
         Some("--restore-editors") => Some(editor::restore_editors()),
-        Some("--cleanup-editor-event") => Some(editor::cleanup_event()),
         Some("--record-workspace-focus") => Some(recent::record_focus()),
         Some("--toggle-project") => Some(recent::toggle_project()),
         _ => None,

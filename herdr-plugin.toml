@@ -48,14 +48,6 @@ action = "open-link"
 on = "workspace.focused"
 command = ["bash", "-c", "exec \"$HERDR_PLUGIN_ROOT/target/release/herdr-deck\" --record-workspace-focus"]
 
-[[events]]
-on = "workspace.closed"
-command = ["bash", "-c", "exec \"$HERDR_PLUGIN_ROOT/target/release/herdr-deck\" --cleanup-editor-event"]
-
-[[events]]
-on = "pane.closed"
-command = ["bash", "-c", "exec \"$HERDR_PLUGIN_ROOT/target/release/herdr-deck\" --cleanup-editor-event"]
-
 [[panes]]
 id = "picker"
 title = "herdr-deck"
