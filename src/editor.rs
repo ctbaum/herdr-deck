@@ -283,7 +283,10 @@ pub fn restore_editors() -> Result<(), String> {
                     .status()
                     .map_err(|error| format!("could not restart deck editor: {error}"))?;
                 status.success().then_some(()).ok_or_else(|| {
-                    format!("Herdr rejected the editor restart for {}", record.editor_pane_id)
+                    format!(
+                        "Herdr rejected the editor restart for {}",
+                        record.editor_pane_id
+                    )
                 })
             });
         if let Err(error) = run {
