@@ -214,7 +214,7 @@ pub fn prepare_editor(
         cwd: cwd.into(),
         nvim_socket: socket_path_for(&socket, workspace),
         agent: agent
-            .filter(|agent| matches!(*agent, "claude" | "codex"))
+            .filter(|agent| matches!(*agent, "claude" | "codex" | "pi"))
             .map(String::from),
         launch_args: launch_args.to_vec(),
     };
@@ -544,6 +544,15 @@ mod tests {
         assert_eq!(
             restore_command(&record).unwrap(),
             "HERDR_NVIM_AGENT='claude' HERDR_NVIM_AGENT_ARGS_JSON='[\"--resume\",\"it'\"'\"'s\"]' '/tmp/my nvim' --listen '/tmp/w1.sock'"
+        );
+        let pi_record = EditorRecord {
+            agent: Some("pi".into()),
+            launch_args: vec!["--session".into(), "/tmp/session with spaces.jsonl".into()],
+            ..record
+        };
+        assert_eq!(
+            restore_command(&pi_record).unwrap(),
+            "HERDR_NVIM_AGENT='pi' HERDR_NVIM_AGENT_ARGS_JSON='[\"--session\",\"/tmp/session with spaces.jsonl\"]' '/tmp/my nvim' --listen '/tmp/w1.sock'"
         );
         unsafe { env::remove_var("HERDR_DECK_NVIM_BIN") };
     }

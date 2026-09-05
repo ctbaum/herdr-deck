@@ -900,6 +900,21 @@ fn codex_launch_args(resume: Option<&Session>, dangerous: bool) -> Vec<String> {
     }
 }
 
+fn pi_launch_args(resume: Option<&Session>) -> Vec<String> {
+    resume
+        .filter(|session| session.agent == SessionAgent::Pi)
+        .map(|session| {
+            vec![
+                "--session".into(),
+                session.file.as_ref().map_or_else(
+                    || session.id.clone(),
+                    |path| path.to_string_lossy().into_owned(),
+                ),
+            ]
+        })
+        .unwrap_or_default()
+}
+
 fn shell_join(args: &[String]) -> String {
     args.iter()
         .map(|arg| shell_quote(arg))
@@ -1087,11 +1102,12 @@ fn launch_deck_inner(
     }
 
     // Env via `workspace create --env` (a `pane run` prefix would be echoed
-    // onto the pane). Claude and Codex both start through nvim so their IDE
+    // onto the pane). Editor-integrated agents start through nvim so their IDE
     // servers exist before the Herdr terminal provider launches the agent.
     let launch_args = match agent {
         Some("claude") => claude_launch_args(resume, dangerous),
         Some("codex") => codex_launch_args(resume, dangerous),
+        Some("pi") => pi_launch_args(resume),
         _ => Vec::new(),
     };
     let args_json = serde_json::to_string(&launch_args)
@@ -1111,6 +1127,8 @@ fn launch_deck_inner(
         create.extend(["--env", "HERDR_NVIM_AGENT=claude", "--env", &args_env]);
     } else if agent == Some("codex") {
         create.extend(["--env", "HERDR_NVIM_AGENT=codex", "--env", &args_env]);
+    } else if agent == Some("pi") {
+        create.extend(["--env", "HERDR_NVIM_AGENT=pi", "--env", &args_env]);
     }
     let created = json(&create).ok_or("herdr workspace create failed")?;
     let root_pane = &created["result"]["root_pane"];
@@ -1142,7 +1160,7 @@ fn launch_deck_inner(
     let agent_pane = match agent {
         // Editor-integrated agents are spawned by nvim after their IDE server
         // starts. None gets the same layout with plain nvim.
-        Some("claude") | Some("codex") | None => None,
+        Some("claude") | Some("codex") | Some("pi") | None => None,
         // Every other agent gets its own pane on the top-right. Dangerous is
         // agent-specific (AGENTS table): append a flag, or prefix an env.
         Some(a) => {
@@ -1543,8 +1561,17 @@ mod tests {
         session.agent = SessionAgent::Pi;
         session.file = Some(PathBuf::from("/tmp/project's session.jsonl"));
         assert_eq!(
+            pi_launch_args(Some(&session)),
+            vec!["--session", "/tmp/project's session.jsonl"]
+        );
+        assert!(pi_launch_args(None).is_empty());
+        assert_eq!(
             session_command(&session),
             "pi --session '/tmp/project'\"'\"'s session.jsonl'"
         );
+        session.file = None;
+        assert_eq!(pi_launch_args(Some(&session)), vec!["--session", "abc-123"]);
+        session.agent = SessionAgent::Codex;
+        assert!(pi_launch_args(Some(&session)).is_empty());
     }
 }

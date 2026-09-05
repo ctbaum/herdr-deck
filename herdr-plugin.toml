@@ -1,7 +1,7 @@
 id = "herdr-deck"
 name = "herdr-deck"
 version = "0.1.0"
-description = "The companion workspace launcher for herdr-agents.nvim: open or resume Claude and Codex in a ready-made Neovim, agent, shell, and lazygit deck."
+description = "The companion workspace launcher for herdr-agents.nvim: open or resume Claude, Codex, and Pi in a ready-made Neovim, agent, shell, and lazygit deck."
 min_herdr_version = "0.7.5"
 platforms = ["linux", "macos"]
 
@@ -15,7 +15,7 @@ command = ["bash", "-c", "exec \"$HERDR_PLUGIN_ROOT/target/release/herdr-deck\" 
 [[actions]]
 id = "open"
 title = "Open herdr-deck"
-description = "Open or resume a Neovim workspace with a connected Claude or Codex agent."
+description = "Open or resume a Neovim workspace with a connected Claude, Codex, or Pi agent."
 contexts = ["workspace"]
 command = ["bash", "scripts/open-deck.sh"]
 

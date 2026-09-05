@@ -121,6 +121,7 @@ or modify Neovim plugins; the editor bridge is a separate conventional plugin.
 | git tab | `lazygit` | the tab is still created, but its command fails |
 | Claude deck | Claude Code CLI + [herdr-agents.nvim](https://github.com/ctbaum/herdr-agents.nvim) + claudecode.nvim | `nvim` opens, but Claude does not auto-start |
 | Codex deck | Codex CLI + [herdr-agents.nvim](https://github.com/ctbaum/herdr-agents.nvim) + codex.nvim | `nvim` opens, but Codex does not auto-start |
+| Pi deck | Pi CLI + herdr-agents.nvim with `pi.enabled = true` + pi-ide.nvim + the Pi `pi-ide` extension | Pi does not auto-start or connect to editor review |
 | agent-pane identification | `pgrep`, `ps` or Linux `/proc`, `grep`, `sed`, `tr`, `sh` | same-tab geometry remains as a startup fallback |
 | saved sessions | agent-owned local history files | only histories found at the supported hardcoded locations appear |
 | remote entries | macOS `open` + Ghostty | remote launch is unavailable on other terminals/platforms |
@@ -132,15 +133,14 @@ own these storage formats and may change them without notice.
 
 ### Neovim integration
 
-Claude and Codex are intentionally launched by their Neovim plugins, after the
+Claude, Codex, and Pi are intentionally launched by their Neovim plugins, after the
 editor-side IDE server is ready. The reusable bridge now lives in
 [herdr-agents.nvim](https://github.com/ctbaum/herdr-agents.nvim), with
-claudecode.nvim and codex.nvim declared through your normal plugin manager.
+claudecode.nvim, codex.nvim, and pi-ide.nvim declared through your normal plugin manager.
 For lazy.nvim:
 
 ```lua
-local inside_herdr = vim.env.HERDR_SOCKET_PATH
-  and vim.env.HERDR_SOCKET_PATH ~= ""
+local inside_herdr = (vim.env.HERDR_SOCKET_PATH or "") ~= ""
 
 return {
   {
@@ -150,8 +150,9 @@ return {
     dependencies = {
       { "coder/claudecode.nvim", dependencies = { "folke/snacks.nvim" } },
       { "ishiooon/codex.nvim", dependencies = { "folke/snacks.nvim" } },
+      { "ldelossa/pi-ide.nvim" },
     },
-    opts = {},
+    opts = { pi = { enabled = true } },
   },
 }
 ```
@@ -182,7 +183,7 @@ arguments and IDE environment variables to the new Herdr pane.
 
 | variable | value set by herdr-deck |
 |---|---|
-| `HERDR_NVIM_AGENT` | `claude` or `codex` |
+| `HERDR_NVIM_AGENT` | `claude`, `codex`, or `pi` |
 | `HERDR_NVIM_AGENT_ARGS_JSON` | JSON array containing the dangerous-mode flag when enabled and any saved-session resume arguments |
 
 This ordering matters: both plugins create an editor-side server and
@@ -337,9 +338,10 @@ herdr-deck mirrors my own personal workflow and layout:
 
 - the deck layout is fixed: editor top-left, agent top-right, terminal
   bottom, lazygit on a new unfocused tab;
-- `claude` and `codex` are special-cased to start through Neovim and their IDE
-  plugins, using the environment contract above; I plan to add Pi and OpenCode
-  next.
+- `claude`, `codex`, and `pi` start through Neovim and their IDE plugins,
+  using the environment contract above. Pi requires enabling its optional
+  adapter and installing `pi install npm:@ldelossa/pi-ide`. Its IDE pairing is
+  editor-specific, and saved Pi sessions retain their native session paths.
 - remote entries spawn their window via macOS `open` + Ghostty, hardcoded.
 
 The dependency table above describes the available fallbacks. The fixed layout
