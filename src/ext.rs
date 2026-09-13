@@ -1122,6 +1122,8 @@ fn launch_deck_inner(
         "--label",
         &label,
         "--no-focus",
+        "--env",
+        "HERDR_NVIM_AGENT_RECOVER=1",
     ];
     if agent == Some("claude") {
         create.extend(["--env", "HERDR_NVIM_AGENT=claude", "--env", &args_env]);

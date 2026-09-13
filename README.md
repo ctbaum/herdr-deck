@@ -122,7 +122,7 @@ or modify Neovim plugins; the editor bridge is a separate conventional plugin.
 | Claude deck | Claude Code CLI + [herdr-agents.nvim](https://github.com/ctbaum/herdr-agents.nvim) + claudecode.nvim | `nvim` opens, but Claude does not auto-start |
 | Codex deck | Codex CLI + [herdr-agents.nvim](https://github.com/ctbaum/herdr-agents.nvim) + codex.nvim | `nvim` opens, but Codex does not auto-start |
 | Pi deck | Pi CLI + herdr-agents.nvim with `pi.enabled = true` + pi-ide.nvim + the Pi `pi-ide` extension | Pi does not auto-start or connect to editor review |
-| agent-pane identification | `pgrep`, `ps` or Linux `/proc`, `grep`, `sed`, `tr`, `sh` | same-tab geometry remains as a startup fallback |
+| live agent-pane identification | `pgrep`, `ps` or Linux `/proc`, `grep`, `sed`, `tr`, `sh` | stable-name relaunch recovery still works, but live process matching is unavailable |
 | saved sessions | agent-owned local history files | only histories found at the supported hardcoded locations appear |
 | remote entries | macOS `open` + Ghostty | remote launch is unavailable on other terminals/platforms |
 
@@ -171,7 +171,7 @@ what they want. Run `:checkhealth herdr-agents` for local diagnostics.
 herdr-agents.nvim provides the editor-side integration:
 
 - external terminal providers and IDE environment forwarding;
-- Herdr-managed agent startup and a same-tab identity fallback;
+- Herdr-managed agent startup and stable editor-pane identity recovery;
 - agent focus, paste, submit, selection, diagnostics, and native diff commands;
 - an opt-in queued review-comment workflow; and
 - duplicate-agent protection.
@@ -185,6 +185,7 @@ arguments and IDE environment variables to the new Herdr pane.
 |---|---|
 | `HERDR_NVIM_AGENT` | `claude`, `codex`, or `pi` |
 | `HERDR_NVIM_AGENT_ARGS_JSON` | JSON array containing the dangerous-mode flag when enabled and any saved-session resume arguments |
+| `HERDR_NVIM_AGENT_RECOVER` | `1`, allowing a relaunched editor to replace and resume its disconnected agent |
 
 This ordering matters: both plugins create an editor-side server and
 pass connection variables to the agent process. Starting the CLI independently
@@ -201,18 +202,31 @@ becomes interactive. Set `HERDR_NVIM_AGENT_START_TIMEOUT` to change the default
 Each deck editor runs Neovim directly in its pane with `--listen` on a
 workspace-scoped socket, recorded in the plugin state directory. The socket
 lets clicked file links in agent output open in the existing editor. After a
-Herdr server restart, the startup hook starts a fresh Neovim (with the same
-agent launch contract) in every recorded deck pane whose editor is gone.
+Neovim quit and relaunch, the plugin finds the agent named for that editor
+pane. If it is not connected to the new IDE endpoint, the plugin reads its
+native session reference, closes the verified pane, and starts one replacement
+that resumes the conversation while preserving non-session launch flags.
+
+After a Herdr server restart, the startup hook starts a fresh Neovim with the
+same agent launch contract in every recorded deck pane whose editor is gone.
+Those editors wait five seconds before recovery so Herdr can finish its own
+native agent restoration. Claude resumes with `--resume`, Codex with `resume`,
+and Pi with `--session`. Herdr only provides native session references through
+supported integrations. If a reference is missing, the plugin leaves the
+existing pane untouched and reports the problem instead of losing the
+conversation or creating a duplicate. See [Herdr session
+restore](https://raw.githubusercontent.com/herdrdev/herdr/v0.9.0/docs/next/website/src/content/docs/session-state.mdx).
 
 Editor state is deliberately not preserved across restarts: swapfiles and
-session plugins already cover that inside Neovim, and agent conversations
-resume from the herdr-deck session picker.
+session plugins already cover that inside Neovim.
 
 ### Environment variables
 
 | variable | direction | purpose |
 |---|---|---|
 | `HERDR_NVIM_AGENT`, `HERDR_NVIM_AGENT_ARGS_JSON` | herdr-deck → workspace | launcher-neutral editor-agent startup contract described above |
+| `HERDR_NVIM_AGENT_RECOVER` | herdr-deck → workspace | opt in to safe same-editor agent recovery on automatic startup |
+| `HERDR_NVIM_AGENT_RECOVER_WAIT_MS` | restored editor → Neovim adapter | delay recovery while Herdr restores native agents; restored deck editors use `5000` |
 | `HERDR_DECK_REMOTES` | user → herdr-deck | comma/space-separated SSH aliases shown as remote entries |
 | `HERDR_DECK_RUNTIME_DIR` | user → herdr-deck | optional parent directory for Neovim listener sockets |
 | `HERDR_NVIM_AGENT_START_TIMEOUT` | user → Neovim adapter | `herdr agent start` timeout in milliseconds; defaults to `30000` |

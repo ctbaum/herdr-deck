@@ -4,8 +4,8 @@
 //! dispatch clicked file links to it. After a Herdr server restart the panes
 //! come back as bare shells; the startup hook simply starts a fresh editor in
 //! each recorded deck pane. No editor state survives a restart on purpose:
-//! swapfiles and session plugins are Neovim's job, and agent conversations
-//! resume from the picker.
+//! swapfiles and session plugins are Neovim's job. Editor-managed agents use
+//! native session references to reconnect to the replacement editor.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -242,7 +242,8 @@ fn pane_workspace(pane: &str) -> Option<String> {
 
 /// Pane command that restarts the editor after a server restart. Workspace env
 /// from `workspace create --env` is not assumed to survive the restart, so the
-/// agent contract rides along as a command-line prefix.
+/// agent contract rides along as a command-line prefix. The recovery window
+/// lets Herdr restore native agent sessions before Neovim inspects the tab.
 fn restore_command(record: &EditorRecord) -> Result<String, String> {
     let Some(agent) = record.agent.as_deref() else {
         return Ok(nvim_listen_command(&record.nvim_socket));
@@ -250,7 +251,7 @@ fn restore_command(record: &EditorRecord) -> Result<String, String> {
     let args = serde_json::to_string(&record.launch_args)
         .map_err(|error| format!("could not encode editor-agent arguments: {error}"))?;
     Ok(format!(
-        "HERDR_NVIM_AGENT={} HERDR_NVIM_AGENT_ARGS_JSON={} {}",
+        "HERDR_NVIM_AGENT={} HERDR_NVIM_AGENT_ARGS_JSON={} HERDR_NVIM_AGENT_RECOVER='1' HERDR_NVIM_AGENT_RECOVER_WAIT_MS='5000' {}",
         shell_quote(agent),
         shell_quote(&args),
         nvim_listen_command(&record.nvim_socket)
@@ -543,7 +544,7 @@ mod tests {
         };
         assert_eq!(
             restore_command(&record).unwrap(),
-            "HERDR_NVIM_AGENT='claude' HERDR_NVIM_AGENT_ARGS_JSON='[\"--resume\",\"it'\"'\"'s\"]' '/tmp/my nvim' --listen '/tmp/w1.sock'"
+            "HERDR_NVIM_AGENT='claude' HERDR_NVIM_AGENT_ARGS_JSON='[\"--resume\",\"it'\"'\"'s\"]' HERDR_NVIM_AGENT_RECOVER='1' HERDR_NVIM_AGENT_RECOVER_WAIT_MS='5000' '/tmp/my nvim' --listen '/tmp/w1.sock'"
         );
         let pi_record = EditorRecord {
             agent: Some("pi".into()),
@@ -552,7 +553,7 @@ mod tests {
         };
         assert_eq!(
             restore_command(&pi_record).unwrap(),
-            "HERDR_NVIM_AGENT='pi' HERDR_NVIM_AGENT_ARGS_JSON='[\"--session\",\"/tmp/session with spaces.jsonl\"]' '/tmp/my nvim' --listen '/tmp/w1.sock'"
+            "HERDR_NVIM_AGENT='pi' HERDR_NVIM_AGENT_ARGS_JSON='[\"--session\",\"/tmp/session with spaces.jsonl\"]' HERDR_NVIM_AGENT_RECOVER='1' HERDR_NVIM_AGENT_RECOVER_WAIT_MS='5000' '/tmp/my nvim' --listen '/tmp/w1.sock'"
         );
         unsafe { env::remove_var("HERDR_DECK_NVIM_BIN") };
     }
