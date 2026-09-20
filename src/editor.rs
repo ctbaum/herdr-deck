@@ -180,11 +180,18 @@ fn shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\"'\"'"))
 }
 
-fn nvim_listen_command(socket: &Path) -> String {
+fn nvim_listen_command(socket: &Path, restore_wait: bool) -> String {
+    let socket = shell_quote(&socket.to_string_lossy());
+    let wait = if restore_wait {
+        "HERDR_NVIM_AGENT_RECOVER_WAIT_MS='5000' "
+    } else {
+        ""
+    };
+    // ponytail: NVIM_LISTEN_ADDRESS is deprecated but is the only shell-native
+    // way for a later plain `nvim` to reuse this socket; use a wrapper if removed.
     format!(
-        "{} --listen {}",
-        shell_quote(&nvim_bin()),
-        shell_quote(&socket.to_string_lossy())
+        "export NVIM_LISTEN_ADDRESS={socket}; {wait}{} --listen {socket}",
+        shell_quote(&nvim_bin())
     )
 }
 
@@ -221,7 +228,7 @@ pub fn prepare_editor(
     protect_dir(&runtime_dir())?;
     remove_stale_socket(&record.nvim_socket)?;
     write_record(&record)?;
-    Ok(nvim_listen_command(&record.nvim_socket))
+    Ok(nvim_listen_command(&record.nvim_socket, false))
 }
 
 fn herdr_json(args: &[&str]) -> Option<Value> {
@@ -246,15 +253,15 @@ fn pane_workspace(pane: &str) -> Option<String> {
 /// lets Herdr restore native agent sessions before Neovim inspects the tab.
 fn restore_command(record: &EditorRecord) -> Result<String, String> {
     let Some(agent) = record.agent.as_deref() else {
-        return Ok(nvim_listen_command(&record.nvim_socket));
+        return Ok(nvim_listen_command(&record.nvim_socket, false));
     };
     let args = serde_json::to_string(&record.launch_args)
         .map_err(|error| format!("could not encode editor-agent arguments: {error}"))?;
     Ok(format!(
-        "HERDR_NVIM_AGENT={} HERDR_NVIM_AGENT_ARGS_JSON={} HERDR_NVIM_AGENT_RECOVER='1' HERDR_NVIM_AGENT_RECOVER_WAIT_MS='5000' {}",
+        "export HERDR_NVIM_AGENT={} HERDR_NVIM_AGENT_ARGS_JSON={} HERDR_NVIM_AGENT_RECOVER='1'; {}",
         shell_quote(agent),
         shell_quote(&args),
-        nvim_listen_command(&record.nvim_socket)
+        nvim_listen_command(&record.nvim_socket, true)
     ))
 }
 
@@ -514,8 +521,10 @@ mod tests {
     fn listener_paths_are_stable_session_scoped_and_sanitized() {
         let first = socket_path_for("/tmp/session-a/herdr.sock", "workspace:1");
         let second = socket_path_for("/tmp/session-a/herdr.sock", "workspace:1");
+        let other_workspace = socket_path_for("/tmp/session-a/herdr.sock", "workspace:2");
         let other = socket_path_for("/tmp/session-b/herdr.sock", "workspace:1");
         assert_eq!(first, second);
+        assert_ne!(first, other_workspace);
         assert_ne!(first, other);
         assert!(
             first
@@ -529,8 +538,8 @@ mod tests {
     fn editor_commands_quote_binary_socket_and_agent_contract() {
         unsafe { env::set_var("HERDR_DECK_NVIM_BIN", "/tmp/my nvim") };
         assert_eq!(
-            nvim_listen_command(Path::new("/tmp/a socket.sock")),
-            "'/tmp/my nvim' --listen '/tmp/a socket.sock'"
+            nvim_listen_command(Path::new("/tmp/a socket.sock"), false),
+            "export NVIM_LISTEN_ADDRESS='/tmp/a socket.sock'; '/tmp/my nvim' --listen '/tmp/a socket.sock'"
         );
         let record = EditorRecord {
             version: RECORD_VERSION,
@@ -544,7 +553,7 @@ mod tests {
         };
         assert_eq!(
             restore_command(&record).unwrap(),
-            "HERDR_NVIM_AGENT='claude' HERDR_NVIM_AGENT_ARGS_JSON='[\"--resume\",\"it'\"'\"'s\"]' HERDR_NVIM_AGENT_RECOVER='1' HERDR_NVIM_AGENT_RECOVER_WAIT_MS='5000' '/tmp/my nvim' --listen '/tmp/w1.sock'"
+            "export HERDR_NVIM_AGENT='claude' HERDR_NVIM_AGENT_ARGS_JSON='[\"--resume\",\"it'\"'\"'s\"]' HERDR_NVIM_AGENT_RECOVER='1'; export NVIM_LISTEN_ADDRESS='/tmp/w1.sock'; HERDR_NVIM_AGENT_RECOVER_WAIT_MS='5000' '/tmp/my nvim' --listen '/tmp/w1.sock'"
         );
         let pi_record = EditorRecord {
             agent: Some("pi".into()),
@@ -553,8 +562,21 @@ mod tests {
         };
         assert_eq!(
             restore_command(&pi_record).unwrap(),
-            "HERDR_NVIM_AGENT='pi' HERDR_NVIM_AGENT_ARGS_JSON='[\"--session\",\"/tmp/session with spaces.jsonl\"]' HERDR_NVIM_AGENT_RECOVER='1' HERDR_NVIM_AGENT_RECOVER_WAIT_MS='5000' '/tmp/my nvim' --listen '/tmp/w1.sock'"
+            "export HERDR_NVIM_AGENT='pi' HERDR_NVIM_AGENT_ARGS_JSON='[\"--session\",\"/tmp/session with spaces.jsonl\"]' HERDR_NVIM_AGENT_RECOVER='1'; export NVIM_LISTEN_ADDRESS='/tmp/w1.sock'; HERDR_NVIM_AGENT_RECOVER_WAIT_MS='5000' '/tmp/my nvim' --listen '/tmp/w1.sock'"
         );
+
+        unsafe { env::set_var("HERDR_DECK_NVIM_BIN", "/bin/echo") };
+        let probe = format!(
+            "unset HERDR_NVIM_AGENT_RECOVER_WAIT_MS; {}; printf '\\nwait=<%s> agent=<%s> recover=<%s> socket=<%s>\\n' \"${{HERDR_NVIM_AGENT_RECOVER_WAIT_MS-}}\" \"$HERDR_NVIM_AGENT\" \"$HERDR_NVIM_AGENT_RECOVER\" \"$NVIM_LISTEN_ADDRESS\"",
+            restore_command(&pi_record).unwrap()
+        );
+        let output = Command::new("sh").args(["-c", &probe]).output().unwrap();
+        assert!(output.status.success());
+        let output = String::from_utf8(output.stdout).unwrap();
+        assert!(output.contains("wait=<>"));
+        assert!(output.contains("agent=<pi>"));
+        assert!(output.contains("recover=<1>"));
+        assert!(output.contains("socket=</tmp/w1.sock>"));
         unsafe { env::remove_var("HERDR_DECK_NVIM_BIN") };
     }
 }

@@ -51,6 +51,27 @@ pub struct Ws {
     pub id: String,
     pub label: String,
     pub status: String,
+    pub cwd: Option<PathBuf>,
+}
+
+fn workspace_cwds(value: &Value) -> HashMap<String, PathBuf> {
+    let mut result = HashMap::new();
+    for pane in value["result"]["panes"]
+        .as_array()
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+    {
+        let Some(workspace) = pane["workspace_id"].as_str() else {
+            continue;
+        };
+        let Some(cwd) = pane["cwd"].as_str().filter(|cwd| !cwd.is_empty()) else {
+            continue;
+        };
+        result
+            .entry(workspace.to_string())
+            .or_insert_with(|| PathBuf::from(cwd));
+    }
+    result
 }
 
 /// Live workspaces, agents needing attention first (blocked, then done),
@@ -59,15 +80,22 @@ pub fn workspaces() -> Vec<Ws> {
     let Some(v) = json(&["herdr", "workspace", "list"]) else {
         return vec![];
     };
+    let cwd = json(&["herdr", "pane", "list"])
+        .map(|panes| workspace_cwds(&panes))
+        .unwrap_or_default();
     let mut ws: Vec<Ws> = v["result"]["workspaces"]
         .as_array()
         .map(|a| a.as_slice())
         .unwrap_or_default()
         .iter()
-        .map(|w| Ws {
-            id: w["workspace_id"].as_str().unwrap_or("").into(),
-            label: w["label"].as_str().unwrap_or("").into(),
-            status: w["agent_status"].as_str().unwrap_or("").into(),
+        .map(|w| {
+            let id = w["workspace_id"].as_str().unwrap_or("");
+            Ws {
+                id: id.into(),
+                label: w["label"].as_str().unwrap_or("").into(),
+                status: w["agent_status"].as_str().unwrap_or("").into(),
+                cwd: cwd.get(id).cloned(),
+            }
         })
         .collect();
     let mut first: HashMap<String, usize> = HashMap::new();
@@ -85,13 +113,6 @@ pub fn workspaces() -> Vec<Ws> {
         (rank, first.get(g).copied().unwrap_or(usize::MAX))
     });
     ws
-}
-
-pub fn ws_id_for_label(label: &str) -> Option<String> {
-    workspaces()
-        .into_iter()
-        .find(|w| w.label == label)
-        .map(|w| w.id)
 }
 
 pub fn focus_workspace(id: &str) {
@@ -994,8 +1015,22 @@ fn in_git_repo(dir: &Path) -> bool {
     out(&["git", "-C", d, "rev-parse", "--git-dir"]).is_some()
 }
 
-/// Build a deck workspace: nvim + agent + full-width terminal + lazygit
-/// tab. `agent` is a detected agent name, or None for a plain deck.
+fn available_workspace_label(base: &str, workspaces: &[Ws]) -> String {
+    let labels: HashSet<&str> = workspaces
+        .iter()
+        .map(|workspace| workspace.label.as_str())
+        .collect();
+    if !labels.contains(base) {
+        return base.to_string();
+    }
+    (2usize..)
+        .map(|number| format!("{base} #{number}"))
+        .find(|label| !labels.contains(label.as_str()))
+        .unwrap()
+}
+
+/// Build a deck workspace: nvim + agent + full-width terminal.
+/// `agent` is a detected agent name, or None for a plain deck.
 /// Returns Ok(()) once the workspace is focused (caller should quit).
 pub fn launch_deck(
     dir: &Path,
@@ -1031,6 +1066,12 @@ fn launch_deck_inner(
     dangerous: bool,
     resume: Option<&Session>,
 ) -> Result<(), String> {
+    if !dir.is_dir() {
+        return Err(format!(
+            "directory no longer exists: {}",
+            collapse_tilde(&dir.to_string_lossy())
+        ));
+    }
     let mut target = dir.to_path_buf();
     let mut resolved_branch = String::new();
 
@@ -1095,10 +1136,17 @@ fn launch_deck_inner(
         label = format!("{label}/{}-{tag}", session.agent.id());
     }
 
-    // A deck for this label already exists: focus it instead of rebuilding.
-    if let Some(existing) = ws_id_for_label(&label) {
-        focus_workspace(&existing);
+    let live = workspaces();
+    // Resuming the same conversation remains idempotent. Ordinary launches
+    // deliberately get another cockpit, even when they share one checkout.
+    if resume.is_some()
+        && let Some(existing) = live.iter().find(|workspace| workspace.label == label)
+    {
+        focus_workspace(&existing.id);
         return Ok(());
+    }
+    if resume.is_none() {
+        label = available_workspace_label(&label, &live);
     }
 
     // Env via `workspace create --env` (a `pane run` prefix would be echoed
@@ -1163,7 +1211,7 @@ fn launch_deck_inner(
         // Editor-integrated agents are spawned by nvim after their IDE server
         // starts. None gets the same layout with plain nvim.
         Some("claude") | Some("codex") | Some("pi") | None => None,
-        // Every other agent gets its own pane on the top-right. Dangerous is
+        // Every other agent gets its own pane on the top-left. Dangerous is
         // agent-specific (AGENTS table): append a flag, or prefix an env.
         Some(a) => {
             let cmd = resume
@@ -1177,7 +1225,7 @@ fn launch_deck_inner(
                 "--direction",
                 "right",
                 "--ratio",
-                "0.7",
+                "0.4",
                 "--cwd",
                 &target_str,
                 "--no-focus",
@@ -1186,6 +1234,20 @@ fn launch_deck_inner(
             let agent_pane = split["result"]["pane"]["pane_id"]
                 .as_str()
                 .ok_or("no pane_id in split result")?;
+            if out(&[
+                "herdr",
+                "pane",
+                "swap",
+                "--source-pane",
+                root,
+                "--target-pane",
+                agent_pane,
+            ])
+            .is_none()
+            {
+                close_workspace(ws);
+                return Err("pane swap for agent layout failed".into());
+            }
             Some((agent_pane.to_string(), cmd))
         }
     };
@@ -1204,23 +1266,6 @@ fn launch_deck_inner(
         out(&["herdr", "pane", "run", &agent_pane, &command]);
     }
 
-    // Unfocused lazygit tab: one keystroke away, out of the way.
-    if let Some(tab) = json(&[
-        "herdr",
-        "tab",
-        "create",
-        "--workspace",
-        ws,
-        "--cwd",
-        &target_str,
-        "--label",
-        "lazygit",
-        "--no-focus",
-    ]) && let Some(git_pane) = tab["result"]["root_pane"]["pane_id"].as_str()
-    {
-        out(&["herdr", "pane", "run", git_pane, "lazygit"]);
-    }
-
     focus_workspace(ws);
     Ok(())
 }
@@ -1228,6 +1273,52 @@ fn launch_deck_inner(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn maps_workspace_directories_and_allocates_distinct_cockpit_labels() {
+        let panes = serde_json::json!({
+            "result": { "panes": [
+                { "workspace_id": "w1", "cwd": "/repo", "foreground_cwd": "/repo/src" },
+                { "workspace_id": "w1", "cwd": "/repo" },
+                { "workspace_id": "w2", "cwd": "/other" },
+                { "workspace_id": "missing-cwd" }
+            ] }
+        });
+        let cwd = workspace_cwds(&panes);
+        assert_eq!(cwd.get("w1"), Some(&PathBuf::from("/repo")));
+        assert_eq!(cwd.get("w2"), Some(&PathBuf::from("/other")));
+        assert!(!cwd.contains_key("missing-cwd"));
+
+        let live = ["project/main", "project/main #2"]
+            .into_iter()
+            .enumerate()
+            .map(|(index, label)| Ws {
+                id: format!("w{index}"),
+                label: label.into(),
+                status: "idle".into(),
+                cwd: None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(available_workspace_label("other/main", &live), "other/main");
+        assert_eq!(
+            available_workspace_label("project/main", &live),
+            "project/main #3"
+        );
+        let gap = ["project/main", "project/main #3"]
+            .into_iter()
+            .enumerate()
+            .map(|(index, label)| Ws {
+                id: format!("g{index}"),
+                label: label.into(),
+                status: "idle".into(),
+                cwd: None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            available_workspace_label("project/main", &gap),
+            "project/main #2"
+        );
+    }
 
     #[test]
     fn reads_native_repo_identity_and_worktrunk_switch_results() {

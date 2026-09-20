@@ -7,8 +7,8 @@
 The companion workspace launcher for
 [herdr-agents.nvim](https://github.com/ctbaum/herdr-agents.nvim): choose a
 project, Git worktree, or saved Claude/Codex session and open it as a ready-made
-[Herdr](https://herdr.dev) deck with Neovim, a connected agent, a shell, and
-lazygit.
+[Herdr](https://herdr.dev) deck with Neovim, a connected agent, and a shell.
+Git stays in the same cockpit through Neogit.
 
 herdr-deck runs inside a Herdr pane and drives everything by shelling out to the
 `herdr` and [`wt` (worktrunk)](https://github.com/max-sixty/worktrunk) CLIs.
@@ -39,14 +39,15 @@ recreates the whole workspace around that integration.
   aliases and each remote Herdr server becomes an entry (`⇄`); Enter opens a
   `herdr --remote` thin client in its own terminal window, leaving the local
   session alone. Running it inside a pane would nest Herdr in Herdr.
-- **Open**: Enter on a live workspace focuses it. Enter on a worktree or
-  directory opens a launch form: pick an agent (found on your `PATH` from
-  Herdr's known-agent list), choose an existing repository worktree from the
-  checkout suggestions, or enter a new branch or Worktrunk
-  shortcut (`^`, `-`, `@`, `pr:N`, `mr:N`, or a PR/MR URL), and go.
-  Worktrunk creates or resolves the checkout, runs its lifecycle hooks, and
-  returns its path to herdr-deck. The resulting deck is an editor + agent pane
-  + full-width terminal + lazygit tab.
+- **Open**: Enter on a live workspace focuses it. `ctrl-o` (or the visible
+  **new cockpit** action) opens another independent editor, agent, and shell on
+  that workspace's checkout; the files and Git state remain shared. Enter on a
+  worktree or directory opens the same form. Choose **same checkout**, or
+  switch to **worktree** to select an existing checkout or enter a new branch
+  or Worktrunk shortcut (`^`, `-`, `@`, `pr:N`, `mr:N`, or a PR/MR URL).
+  Worktrunk creates or resolves worktrees, runs their lifecycle hooks, and
+  returns the checkout path to herdr-deck. Each result is one cockpit tab;
+  Neogit keeps Git inside Neovim.
 - **Quick toggle**: the native plugin tracks workspace focus events and exposes
   `herdr-deck.toggle-project`, which switches directly between the two most
   recently visited projects without opening the picker.
@@ -65,8 +66,9 @@ recreates the whole workspace around that integration.
   resume in a recreated deck rooted at the session's original directory.
   Cursor opens its native session picker in that deck because its CLI does
   not expose a queryable local history store.
-- **Create**: `ctrl-n` prompts for a new directory. A new worktree in an
-  existing repo is just Enter on the repo plus the branch field.
+- **Create**: `ctrl-n` prompts for a new directory. A new worktree is the
+  launch form's **worktree** location plus a branch, PR/MR, or Worktrunk
+  shortcut.
 - **Destroy**: `ctrl-d` closes a workspace, or removes a worktree, but only
   when its branch is merged (worktrunk's `integrated`/`empty` state); an
   unmerged worktree gets an explicit force-remove confirmation instead.
@@ -118,7 +120,6 @@ or modify Neovim plugins; the editor bridge is a separate conventional plugin.
 | linked-worktree create/remove | [worktrunk](https://github.com/max-sixty/worktrunk) (`wt`) with JSON output | ordinary directory decks still work; worktree actions and status do not |
 | directory discovery | `zoxide` and/or `fd` | that source becomes sparse or empty |
 | directory preview | `eza`, with `ls` fallback | falls back to plain `ls -la` |
-| git tab | `lazygit` | the tab is still created, but its command fails |
 | Claude deck | Claude Code CLI + [herdr-agents.nvim](https://github.com/ctbaum/herdr-agents.nvim) + claudecode.nvim | `nvim` opens, but Claude does not auto-start |
 | Codex deck | Codex CLI + [herdr-agents.nvim](https://github.com/ctbaum/herdr-agents.nvim) + codex.nvim | `nvim` opens, but Codex does not auto-start |
 | Pi deck | Pi CLI + herdr-agents.nvim with `pi.enabled = true` + pi-ide.nvim + the Pi `pi-ide` extension | Pi does not auto-start or connect to editor review |
@@ -201,9 +202,11 @@ becomes interactive. Set `HERDR_NVIM_AGENT_START_TIMEOUT` to change the default
 
 Each deck editor runs Neovim directly in its pane with `--listen` on a
 workspace-scoped socket, recorded in the plugin state directory. The socket
-lets clicked file links in agent output open in the existing editor. After a
-Neovim quit and relaunch, the plugin finds the agent named for that editor
-pane. If it is not connected to the new IDE endpoint, the plugin reads its
+lets clicked file links in agent output open in the existing editor. The
+listener address and agent launch contract remain in the pane's shell, so
+running plain `nvim` after a quit recreates the same editor endpoint. The plugin
+then finds the agent named for that editor pane. If it is not connected to the
+new IDE endpoint, the plugin reads its
 native session reference, closes the verified pane, and starts one replacement
 that resumes the conversation while preserving non-session launch flags.
 
@@ -226,7 +229,8 @@ session plugins already cover that inside Neovim.
 |---|---|---|
 | `HERDR_NVIM_AGENT`, `HERDR_NVIM_AGENT_ARGS_JSON` | herdr-deck → workspace | launcher-neutral editor-agent startup contract described above |
 | `HERDR_NVIM_AGENT_RECOVER` | herdr-deck → workspace | opt in to safe same-editor agent recovery on automatic startup |
-| `HERDR_NVIM_AGENT_RECOVER_WAIT_MS` | restored editor → Neovim adapter | delay recovery while Herdr restores native agents; restored deck editors use `5000` |
+| `HERDR_NVIM_AGENT_RECOVER_WAIT_MS` | restored editor process → Neovim adapter | one-shot delay while Herdr restores native agents; automatic restores use `5000` without retaining it in the pane shell |
+| `NVIM_LISTEN_ADDRESS` | herdr-deck → editor pane shell | keep plain `nvim` relaunches on the deck's recorded RPC socket |
 | `HERDR_DECK_REMOTES` | user → herdr-deck | comma/space-separated SSH aliases shown as remote entries |
 | `HERDR_DECK_RUNTIME_DIR` | user → herdr-deck | optional parent directory for Neovim listener sockets |
 | `HERDR_NVIM_AGENT_START_TIMEOUT` | user → Neovim adapter | `herdr agent start` timeout in milliseconds; defaults to `30000` |
@@ -326,11 +330,12 @@ Keyboard controls remain available alongside the mouse:
 | key | action |
 |-----|--------|
 | type | filter (`esc` clears) |
-| `↵` | focus workspace / open remote window / launch form / resume session |
+| `↵` | focus workspace / open remote window / new-cockpit form / resume session |
+| `ctrl-o` | new cockpit for the selected workspace, directory, or worktree |
 | `ctrl-s` | switch projects / past sessions source |
 | `ctrl-g` | toggle cleanable integrated-worktree source |
 | `tab` / `shift-tab` | sessions: cycle agent filter |
-| `ctrl-n` | new directory, then launch form |
+| `ctrl-n` | new directory, then new-cockpit form |
 | `ctrl-d` | close workspace / merge-gated worktree remove |
 | `ctrl-x` | cleanable source: remove all visible clean entries |
 | `ctrl-r` | reload |
@@ -343,15 +348,16 @@ vim-herdr-navigation), add `herdr-deck` to its passthrough list so `ctrl-j/k`
 reach the picker:
 
 ```sh
-export HERDR_NAV_PASSTHROUGH_RE='^(lazygit|herdr-deck)$'
+export HERDR_NAV_PASSTHROUGH_RE='^herdr-deck$'
 ```
 
 ## Opinionated setup and compatibility
 
 herdr-deck mirrors my own personal workflow and layout:
 
-- the deck layout is fixed: editor top-left, agent top-right, terminal
-  bottom, lazygit on a new unfocused tab;
+- the deck layout is a single cockpit tab: agent top-left (40%), editor
+  top-right (60%), terminal bottom (20%), with Git handled inside Neovim
+  through Neogit;
 - `claude`, `codex`, and `pi` start through Neovim and their IDE plugins,
   using the environment contract above. Pi requires enabling its optional
   adapter and installing `pi install npm:@ldelossa/pi-ide`. Its IDE pairing is

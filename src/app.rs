@@ -14,10 +14,17 @@ use std::sync::mpsc;
 
 #[derive(Clone)]
 pub enum EntryKind {
-    Workspace { id: String, status: String },
+    Workspace {
+        id: String,
+        status: String,
+        cwd: Option<PathBuf>,
+    },
     Remote(String), // ssh alias from $HERDR_DECK_REMOTES; opens herdr --remote
     Worktree(PathBuf),
-    Cleanable { path: PathBuf, clean: bool },
+    Cleanable {
+        path: PathBuf,
+        clean: bool,
+    },
     Dir(PathBuf),
     Session(Session),
 }
@@ -29,6 +36,16 @@ pub struct Entry {
 }
 
 impl Entry {
+    pub fn launch_dir(&self) -> Option<&PathBuf> {
+        match &self.kind {
+            EntryKind::Workspace { cwd, .. } => cwd.as_ref(),
+            EntryKind::Worktree(path)
+            | EntryKind::Cleanable { path, .. }
+            | EntryKind::Dir(path) => Some(path),
+            EntryKind::Remote(_) | EntryKind::Session(_) => None,
+        }
+    }
+
     pub fn cache_key(&self) -> String {
         match &self.kind {
             EntryKind::Workspace { id, .. } => format!("w:{id}"),
@@ -60,6 +77,12 @@ pub enum Source {
     Cleanup,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LaunchTarget {
+    SameCheckout,
+    Worktree,
+}
+
 /// A rendered control that can receive mouse input. Rendering owns the exact
 /// rectangles so hit testing can never drift from the visible UI.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -69,6 +92,7 @@ pub enum HitTarget {
     Result(usize),
     Source(Source),
     CycleAgent,
+    NewCockpit,
     NewPath,
     Delete,
     RemoveAll,
@@ -76,6 +100,8 @@ pub enum HitTarget {
     Help,
     Quit,
     ModalSurface,
+    LaunchSameCheckout,
+    LaunchWorktree,
     LaunchAgent(usize),
     LaunchCheckout,
     LaunchCandidates,
@@ -107,6 +133,7 @@ impl HitRegion {
 
 pub struct LaunchForm {
     pub dir: PathBuf,
+    pub target: LaunchTarget,
     pub agent: usize, // index into App.agents; == agents.len() means "none"
     pub branch: String,
     pub candidates: Vec<ext::WorktreeCandidate>,
@@ -116,13 +143,14 @@ pub struct LaunchForm {
     /// Index into the filtered candidate list, not `candidates` itself.
     pub candidate_selected: Option<usize>,
     pub dangerous: bool,
-    pub field: usize, // 0 agent, 1 branch, 2 dangerous
+    pub field: usize, // 0 location, 1 agent, 2 worktree, 3 dangerous
 }
 
 impl LaunchForm {
     fn new(dir: PathBuf, agent: usize) -> Self {
         Self {
             dir,
+            target: LaunchTarget::SameCheckout,
             agent,
             branch: String::new(),
             candidates: vec![],
@@ -131,6 +159,26 @@ impl LaunchForm {
             dangerous: true,
             field: 0,
         }
+    }
+
+    fn set_target(&mut self, target: LaunchTarget) {
+        self.target = target;
+        self.field = 0;
+        self.candidate_selected = None;
+    }
+
+    fn move_field(&mut self, delta: isize) {
+        let fields: &[usize] = if self.target == LaunchTarget::Worktree {
+            &[0, 1, 2, 3]
+        } else {
+            &[0, 1, 3]
+        };
+        let current = fields
+            .iter()
+            .position(|field| *field == self.field)
+            .unwrap_or(0);
+        self.field = fields[(current as isize + delta).rem_euclid(fields.len() as isize) as usize];
+        self.candidate_selected = None;
     }
 
     pub fn matching_candidates(&self) -> Vec<usize> {
@@ -162,7 +210,8 @@ impl LaunchForm {
     /// is visible before it silently becomes a branch.
     pub fn pending_create(&self) -> Option<&str> {
         let typed = self.branch.trim();
-        if typed.is_empty()
+        if self.target != LaunchTarget::Worktree
+            || typed.is_empty()
             || self.candidates_loading // an exact match may still be on its way
             || self.candidate_selected.is_some()
             || ext::worktrunk_is_shortcut(typed)
@@ -374,6 +423,7 @@ impl App {
                         kind: EntryKind::Workspace {
                             id: w.id,
                             status: w.status,
+                            cwd: w.cwd,
                         },
                     });
                 }
@@ -465,6 +515,14 @@ impl App {
         while let Ok((key, text)) = self.preview_rx.try_recv() {
             self.preview.insert(key, text);
         }
+    }
+
+    fn open_new_cockpit(&mut self) {
+        let Some(dir) = self.selected_entry().and_then(Entry::launch_dir).cloned() else {
+            self.status = Some(Status::info("no local project selected"));
+            return;
+        };
+        self.open_launch_form(dir);
     }
 
     /// Open the launch form immediately and fetch its checkout candidates on
@@ -654,7 +712,7 @@ impl App {
                     }
                     Some(HitTarget::LaunchCandidate(index)) => {
                         if let Mode::Launch(form) = &mut self.mode {
-                            form.field = 1;
+                            form.field = 2;
                             form.candidate_selected = Some(index);
                         }
                     }
@@ -701,29 +759,40 @@ impl App {
             Some(HitTarget::CycleAgent) if self.source == Source::Sessions => {
                 self.cycle_session_agent(1)
             }
+            Some(HitTarget::NewCockpit) => self.open_new_cockpit(),
             Some(HitTarget::NewPath) => self.mode = Mode::NewPath { input: "~/".into() },
             Some(HitTarget::Delete) => self.delete_selected(),
             Some(HitTarget::RemoveAll) => self.confirm_remove_all(),
             Some(HitTarget::Reload) => self.queue_reload(),
             Some(HitTarget::Help) => self.mode = Mode::Help,
             Some(HitTarget::Quit) => self.quit = true,
+            Some(HitTarget::LaunchSameCheckout) => {
+                if let Mode::Launch(form) = &mut self.mode {
+                    form.set_target(LaunchTarget::SameCheckout);
+                }
+            }
+            Some(HitTarget::LaunchWorktree) => {
+                if let Mode::Launch(form) = &mut self.mode {
+                    form.set_target(LaunchTarget::Worktree);
+                }
+            }
             Some(HitTarget::LaunchAgent(index)) => {
                 if let Mode::Launch(form) = &mut self.mode
                     && index <= self.agents.len()
                 {
                     form.agent = index;
-                    form.field = 0;
+                    form.field = 1;
                 }
             }
             Some(HitTarget::LaunchCheckout) => {
                 if let Mode::Launch(form) = &mut self.mode {
-                    form.field = 1;
+                    form.field = 2;
                     form.candidate_selected = None;
                 }
             }
             Some(HitTarget::LaunchCandidate(index)) => {
                 if let Mode::Launch(form) = &mut self.mode {
-                    form.field = 1;
+                    form.field = 2;
                     form.candidate_selected = Some(index);
                     form.accept_candidate();
                 }
@@ -735,7 +804,7 @@ impl App {
                         .get(form.agent)
                         .is_some_and(|agent| ext::dangerous_toggleable(agent))
                 {
-                    form.field = 2;
+                    form.field = 3;
                     form.dangerous = !form.dangerous;
                 }
             }
@@ -825,6 +894,7 @@ impl App {
             }
             KeyCode::Tab if self.source == Source::Sessions => self.cycle_session_agent(1),
             KeyCode::BackTab if self.source == Source::Sessions => self.cycle_session_agent(-1),
+            KeyCode::Char('o') if ctrl => self.open_new_cockpit(),
             KeyCode::Char('n') if ctrl => self.mode = Mode::NewPath { input: "~/".into() },
             KeyCode::Char('d') if ctrl => self.delete_selected(),
             KeyCode::Char('x') if ctrl && self.source == Source::Cleanup => {
@@ -1043,41 +1113,41 @@ impl App {
         };
         match key.code {
             KeyCode::Esc => self.mode = Mode::List,
-            KeyCode::Tab => {
-                form.field = (form.field + 1) % 3;
-                form.candidate_selected = None;
-            }
-            KeyCode::BackTab => {
-                form.field = (form.field + 2) % 3;
-                form.candidate_selected = None;
-            }
-            KeyCode::Down if form.field == 1 => form.move_candidate(1),
-            KeyCode::Up if form.field == 1 => form.move_candidate(-1),
-            KeyCode::Down => form.field = (form.field + 1) % 3,
-            KeyCode::Up => form.field = (form.field + 2) % 3,
+            KeyCode::Tab => form.move_field(1),
+            KeyCode::BackTab => form.move_field(-1),
+            KeyCode::Down if form.field == 2 => form.move_candidate(1),
+            KeyCode::Up if form.field == 2 => form.move_candidate(-1),
+            KeyCode::Down => form.move_field(1),
+            KeyCode::Up => form.move_field(-1),
             KeyCode::Enter => {
-                if form.field == 1 && form.accept_candidate() {
+                if form.field == 2 && form.accept_candidate() {
                     return;
                 }
                 self.submit_launch();
             }
-            KeyCode::Left if form.field == 0 => form.agent = (form.agent + n_agents - 1) % n_agents,
-            KeyCode::Right | KeyCode::Char(' ') if form.field == 0 => {
+            KeyCode::Left if form.field == 0 => form.set_target(LaunchTarget::SameCheckout),
+            KeyCode::Right if form.field == 0 => form.set_target(LaunchTarget::Worktree),
+            KeyCode::Char(' ') if form.field == 0 => form.set_target(match form.target {
+                LaunchTarget::SameCheckout => LaunchTarget::Worktree,
+                LaunchTarget::Worktree => LaunchTarget::SameCheckout,
+            }),
+            KeyCode::Left if form.field == 1 => form.agent = (form.agent + n_agents - 1) % n_agents,
+            KeyCode::Right | KeyCode::Char(' ') if form.field == 1 => {
                 form.agent = (form.agent + 1) % n_agents
             }
             KeyCode::Char(' ')
-                if form.field == 2
+                if form.field == 3
                     && agents
                         .get(form.agent)
                         .is_some_and(|a| ext::dangerous_toggleable(a)) =>
             {
                 form.dangerous = !form.dangerous
             }
-            KeyCode::Backspace if form.field == 1 => {
+            KeyCode::Backspace if form.field == 2 => {
                 form.branch.pop();
                 form.candidate_selected = None;
             }
-            KeyCode::Char(c) if form.field == 1 => {
+            KeyCode::Char(c) if form.field == 2 => {
                 form.branch.push(c);
                 form.candidate_selected = None;
             }
@@ -1089,15 +1159,23 @@ impl App {
         let Mode::Launch(form) = &self.mode else {
             return;
         };
-        let msg = if form.branch.trim().is_empty() {
-            "building deck…"
+        let branch = match form.target {
+            LaunchTarget::SameCheckout => String::new(),
+            LaunchTarget::Worktree if form.branch.trim().is_empty() => {
+                self.status = Some(Status::info("choose or enter a worktree"));
+                return;
+            }
+            LaunchTarget::Worktree => form.branch.clone(),
+        };
+        let msg = if branch.is_empty() {
+            "building new cockpit…"
         } else {
-            "resolving checkout, running hooks…"
+            "resolving worktree, running hooks…"
         };
         self.pending = Some(Pending::Launch {
             dir: form.dir.clone(),
             agent: self.agents.get(form.agent).cloned(),
-            branch: form.branch.clone(),
+            branch,
             dangerous: form.dangerous,
         });
         self.status = Some(Status::info(msg));
@@ -1185,6 +1263,7 @@ mod tests {
     fn launch_form(branches: &[&str]) -> LaunchForm {
         LaunchForm {
             dir: PathBuf::from("/repo"),
+            target: LaunchTarget::Worktree,
             agent: 0,
             branch: String::new(),
             candidates: branches
@@ -1198,7 +1277,7 @@ mod tests {
             candidates_loading: false,
             candidate_selected: None,
             dangerous: true,
-            field: 1,
+            field: 2,
         }
     }
 
@@ -1254,6 +1333,80 @@ mod tests {
     }
 
     #[test]
+    fn launch_fields_skip_the_hidden_worktree_input() {
+        let mut form = launch_form(&["main"]);
+        form.set_target(LaunchTarget::SameCheckout);
+        form.move_field(1);
+        assert_eq!(form.field, 1);
+        form.move_field(1);
+        assert_eq!(form.field, 3);
+        form.move_field(1);
+        assert_eq!(form.field, 0);
+        form.move_field(-1);
+        assert_eq!(form.field, 3);
+
+        form.set_target(LaunchTarget::Worktree);
+        form.move_field(1);
+        form.move_field(1);
+        assert_eq!(form.field, 2);
+    }
+
+    #[test]
+    fn launch_target_controls_checkout_handoff() {
+        let mut app = test_app();
+        let mut form = launch_form(&["main", "feature/picker"]);
+        form.target = LaunchTarget::SameCheckout;
+        form.branch = "stale-branch".into();
+        app.mode = Mode::Launch(form);
+        app.submit_launch();
+        assert!(matches!(
+            app.pending,
+            Some(Pending::Launch { ref branch, .. }) if branch.is_empty()
+        ));
+
+        app.pending = None;
+        let mut form = launch_form(&["main"]);
+        form.branch.clear();
+        app.mode = Mode::Launch(form);
+        app.submit_launch();
+        assert!(app.pending.is_none());
+        assert_eq!(
+            app.status.as_ref().map(|status| status.msg.as_str()),
+            Some("choose or enter a worktree")
+        );
+
+        let mut form = launch_form(&["main"]);
+        form.branch = "feature/new-cockpit".into();
+        app.mode = Mode::Launch(form);
+        app.submit_launch();
+        assert!(matches!(
+            app.pending,
+            Some(Pending::Launch { ref branch, .. }) if branch == "feature/new-cockpit"
+        ));
+    }
+
+    #[test]
+    fn new_cockpit_uses_the_selected_workspace_directory() {
+        let mut app = test_app();
+        app.entries.push(Entry {
+            label: "project/main".into(),
+            kind: EntryKind::Workspace {
+                id: "workspace-1".into(),
+                status: "idle".into(),
+                cwd: Some(PathBuf::from("/repo")),
+            },
+        });
+        app.filtered.push(0);
+
+        app.open_new_cockpit();
+        let Mode::Launch(form) = &app.mode else {
+            panic!("new cockpit should open the launch form");
+        };
+        assert_eq!(form.dir, PathBuf::from("/repo"));
+        assert_eq!(form.target, LaunchTarget::SameCheckout);
+    }
+
+    #[test]
     fn mouse_hover_and_wheel_follow_visible_result_rows() {
         let mut app = test_app();
         app.filtered = (0..6).collect();
@@ -1273,8 +1426,21 @@ mod tests {
     }
 
     #[test]
-    fn clicking_a_candidate_accepts_it_and_clicking_outside_cancels() {
+    fn clicking_launch_location_and_candidate_updates_the_form() {
         let mut app = test_app();
+        let mut form = launch_form(&["main", "feature/picker"]);
+        form.set_target(LaunchTarget::SameCheckout);
+        app.mode = Mode::Launch(form);
+        app.hit_regions = vec![HitRegion::new(
+            Rect::new(3, 2, 20, 1),
+            HitTarget::LaunchWorktree,
+        )];
+        app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 4, 2));
+        let Mode::Launch(form) = &app.mode else {
+            panic!("launch form should remain open");
+        };
+        assert_eq!(form.target, LaunchTarget::Worktree);
+
         app.mode = Mode::Launch(launch_form(&["main", "feature/picker"]));
         app.hit_regions = vec![HitRegion::new(
             Rect::new(3, 3, 20, 1),

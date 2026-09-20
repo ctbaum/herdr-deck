@@ -5,7 +5,8 @@
 //! active Herdr theme, including custom color overrides.
 
 use crate::app::{
-    self, App, DelAction, Entry, EntryKind, HitRegion, HitTarget, LaunchForm, Mode, Source,
+    self, App, DelAction, Entry, EntryKind, HitRegion, HitTarget, LaunchForm, LaunchTarget, Mode,
+    Source,
 };
 use crate::ext;
 use crate::theme::Palette;
@@ -225,9 +226,12 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App, hits: &mut Vec<HitRegion>) 
 
     x = x.saturating_add(1);
     let mut actions = Vec::new();
+    if app.selected_entry().and_then(Entry::launch_dir).is_some() {
+        actions.push((" ^o new cockpit ", HitTarget::NewCockpit));
+    }
     match app.source {
         Source::Projects => {
-            actions.push((" ^n new ", HitTarget::NewPath));
+            actions.push((" ^n new dir ", HitTarget::NewPath));
             actions.push((" ^d delete ", HitTarget::Delete));
         }
         Source::Sessions => actions.push((" ⇥ agent ", HitTarget::CycleAgent)),
@@ -500,14 +504,15 @@ fn draw_launch(
 ) {
     let palette = &app.palette;
     let option_rows = agent_option_rows(agents, form.agent, LAUNCH_W.saturating_sub(4) as usize);
-    let height = 16 + option_rows.len() as u16;
+    let worktree = form.target == LaunchTarget::Worktree;
+    let height = (if worktree { 21 } else { 13 }) + option_rows.len() as u16;
     let Some((_, inner)) = modal_shell(f, area, LAUNCH_W, height, palette.accent, palette, hits)
     else {
         return;
     };
     f.render_widget(
         Paragraph::new(format!(
-            " launch: {}",
+            " new cockpit: {}",
             ext::collapse_tilde(&form.dir.to_string_lossy())
         ))
         .style(Style::new().fg(palette.text).bold()),
@@ -516,7 +521,59 @@ fn draw_launch(
 
     let mut y = inner.y + 2;
     f.render_widget(
-        Paragraph::new(" agent").style(Style::new().fg(if form.field == 0 {
+        Paragraph::new(" location").style(Style::new().fg(if form.field == 0 {
+            palette.accent
+        } else {
+            palette.overlay0
+        })),
+        Rect::new(inner.x, y, inner.width, 1),
+    );
+    y += 1;
+    let mut x = inner.x + 1;
+    for (target, selected, label) in [
+        (
+            HitTarget::LaunchSameCheckout,
+            form.target == LaunchTarget::SameCheckout,
+            "same checkout",
+        ),
+        (
+            HitTarget::LaunchWorktree,
+            form.target == LaunchTarget::Worktree,
+            "worktree…",
+        ),
+    ] {
+        let text = format!(" {} {label} ", if selected { "(●)" } else { "( )" });
+        let width = text.chars().count() as u16;
+        let rect = Rect::new(x, y, width, 1);
+        let hovered = app.hovered.as_ref() == Some(&target);
+        let style = if selected {
+            Style::new()
+                .fg(palette.contrast_fg())
+                .bg(palette.accent)
+                .bold()
+        } else if hovered {
+            Style::new().fg(palette.text).bg(palette.surface1)
+        } else {
+            Style::new().fg(palette.subtext0)
+        };
+        f.render_widget(Paragraph::new(text).style(style), rect);
+        hits.push(HitRegion::new(rect, target));
+        x += width;
+    }
+    y += 1;
+    let location_help = if worktree {
+        " choose an existing worktree or type a branch to create one"
+    } else {
+        " shares files and Git state; editor, agent, and shell are new"
+    };
+    f.render_widget(
+        Paragraph::new(location_help).style(Style::new().fg(palette.overlay0)),
+        Rect::new(inner.x, y, inner.width, 1),
+    );
+    y += 2;
+
+    f.render_widget(
+        Paragraph::new(" agent").style(Style::new().fg(if form.field == 1 {
             palette.accent
         } else {
             palette.overlay0
@@ -549,31 +606,46 @@ fn draw_launch(
         y += 1;
     }
 
-    f.render_widget(
-        Paragraph::new(" checkout").style(Style::new().fg(if form.field == 1 {
-            palette.accent
+    if worktree {
+        f.render_widget(
+            Paragraph::new(" worktree").style(Style::new().fg(if form.field == 2 {
+                palette.accent
+            } else {
+                palette.overlay0
+            })),
+            Rect::new(inner.x, y, inner.width, 1),
+        );
+        y += 1;
+        let checkout = Rect::new(inner.x, y, inner.width, 1);
+        f.render_widget(Clear, checkout);
+        let input = if form.branch.is_empty() {
+            Line::from(vec![
+                Span::styled(
+                    " branch, shortcut, or existing worktree",
+                    Style::new().fg(palette.overlay0),
+                ),
+                Span::styled(
+                    if form.field == 2 { "█" } else { "" },
+                    Style::new().fg(palette.accent),
+                ),
+            ])
         } else {
-            palette.overlay0
-        })),
-        Rect::new(inner.x, y, inner.width, 1),
-    );
-    y += 1;
-    let checkout = Rect::new(inner.x, y, inner.width, 1);
-    f.render_widget(Clear, checkout);
-    f.render_widget(
-        Paragraph::new(format!(
-            " {}{}",
-            form.branch,
-            if form.field == 1 { "█" } else { "" }
-        ))
-        .style(Style::new().fg(palette.text).bg(palette.surface0)),
-        checkout,
-    );
-    hits.push(HitRegion::new(checkout, HitTarget::LaunchCheckout));
-    y += 1;
+            Line::from(vec![
+                Span::styled(format!(" {}", form.branch), Style::new().fg(palette.text)),
+                Span::styled(
+                    if form.field == 2 { "█" } else { "" },
+                    Style::new().fg(palette.accent),
+                ),
+            ])
+        };
+        f.render_widget(
+            Paragraph::new(input).style(Style::new().bg(palette.surface0)),
+            checkout,
+        );
+        hits.push(HitRegion::new(checkout, HitTarget::LaunchCheckout));
+        y += 1;
 
-    let candidate_area = Rect::new(inner.x, y, inner.width, 5.min(inner.height));
-    if form.field == 1 {
+        let candidate_area = Rect::new(inner.x, y, inner.width, 5.min(inner.height));
         hits.push(HitRegion::new(candidate_area, HitTarget::LaunchCandidates));
         let matches = form.matching_candidates();
         if form.candidates_loading {
@@ -621,15 +693,15 @@ fn draw_launch(
                 hits.push(HitRegion::new(rect, target));
             }
         }
+        if let Some(name) = form.pending_create() {
+            f.render_widget(
+                Paragraph::new(format!(" ↵ create worktree '{name}'"))
+                    .style(Style::new().fg(palette.yellow)),
+                Rect::new(inner.x, y + 5, inner.width, 1),
+            );
+        }
+        y += 6;
     }
-    if let Some(name) = form.pending_create() {
-        f.render_widget(
-            Paragraph::new(format!(" ↵ create worktree '{name}'"))
-                .style(Style::new().fg(palette.yellow)),
-            Rect::new(inner.x, y + 5, inner.width, 1),
-        );
-    }
-    y += 6;
 
     let toggleable = agents
         .get(form.agent)
@@ -640,7 +712,7 @@ fn draw_launch(
         Style::new()
             .fg(palette.overlay0)
             .add_modifier(Modifier::DIM)
-    } else if app.hovered.as_ref() == Some(&dangerous_target) || form.field == 2 {
+    } else if app.hovered.as_ref() == Some(&dangerous_target) || form.field == 3 {
         Style::new().fg(palette.accent).bold()
     } else {
         Style::new().fg(palette.subtext0)
@@ -657,17 +729,26 @@ fn draw_launch(
         hits.push(HitRegion::new(dangerous_rect, dangerous_target));
     }
     y += 1;
+    let help = if worktree {
+        " ^ default · - previous · @ current · pr:N GitHub · mr:N GitLab"
+    } else {
+        " ←/→ changes location · tab moves between fields"
+    };
     f.render_widget(
-        Paragraph::new(" ^ default · - previous · @ current · pr:N GitHub · mr:N GitLab")
-            .style(Style::new().fg(palette.overlay0)),
+        Paragraph::new(help).style(Style::new().fg(palette.overlay0)),
         Rect::new(inner.x, y, inner.width, 1),
     );
 
-    let buttons = button_row(inner, &["↵ launch", "esc cancel"]);
+    let primary = if form.pending_create().is_some() {
+        "↵ create + open"
+    } else {
+        "↵ open cockpit"
+    };
+    let buttons = button_row(inner, &[primary, "esc cancel"]);
     draw_button(
         f,
         buttons[0],
-        "↵ launch",
+        primary,
         HitTarget::Submit,
         Some(palette.accent),
         app,
@@ -783,13 +864,17 @@ fn draw_help(f: &mut Frame, area: Rect, app: &App, hits: &mut Vec<HitRegion>) {
         ("^s", "switch projects / agent sessions source"),
         ("^g", "toggle cleanable integrated-worktree source"),
         ("⇥", "sessions: filter by agent (shift-tab reverses)"),
-        ("↵", "workspace: focus · remote: open · directory: launch"),
-        ("^n", "new directory, then launch form"),
+        (
+            "↵",
+            "workspace: focus · remote: open · directory: new cockpit",
+        ),
+        ("^o", "new cockpit for the selected local project"),
+        ("^n", "new directory, then new-cockpit form"),
         ("^d", "workspace: close · worktree: merge-gated remove"),
         ("^x", "cleanable: remove all visible clean entries"),
         ("^r", "reload the list"),
         ("esc", "back / quit"),
-        ("", "new worktree = open a repo + branch/PR/wt shortcut"),
+        ("", "worktree = choose one or enter a branch/PR/wt shortcut"),
         ("", "dangerous mode starts enabled; disable before launch"),
     ];
     let Some((_, inner)) = modal_shell(

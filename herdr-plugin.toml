@@ -1,7 +1,7 @@
 id = "herdr-deck"
 name = "herdr-deck"
 version = "0.1.0"
-description = "The companion workspace launcher for herdr-agents.nvim: open or resume Claude, Codex, and Pi in a ready-made Neovim, agent, shell, and lazygit deck."
+description = "The companion workspace launcher for herdr-agents.nvim: open or resume Claude, Codex, and Pi in a ready-made Neovim, agent, and shell deck."
 min_herdr_version = "0.7.5"
 platforms = ["linux", "macos"]
 
