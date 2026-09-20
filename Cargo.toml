@@ -1,6 +1,6 @@
 [package]
 name = "herdr-deck"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 description = "Companion workspace launcher for herdr-agents.nvim: open Claude and Codex in ready-made Herdr decks"
 license = "MIT"

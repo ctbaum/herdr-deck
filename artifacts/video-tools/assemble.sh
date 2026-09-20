@@ -27,10 +27,10 @@ caption() {
 
 caption 01a 64 'Blocked agents rise to the top.'
 caption 01b 64 'Browse by project, with the live layout in view.'
-caption 02a 64 'Pick a checkout and the agent that should open with it.'
-caption 02b 64 'Worktrunk resolves the workspace, then Herdr launches it.'
+caption 02a 64 'Choose the same checkout or a worktree, then pick the agent.'
+caption 02b 64 'Worktrunk resolves the checkout, then Herdr launches it.'
 caption 03a 64 'Editor, agent, and shell in one workspace.'
-caption 03b 64 'LazyGit stays one tab away.'
+caption 03b 64 'One cockpit keeps everything in view.'
 caption 04 64 'Jump between your two most recent projects.'
 caption 05a 64 'Resume saved conversations in project context.'
 caption 05b 64 'Filter session history by agent.'

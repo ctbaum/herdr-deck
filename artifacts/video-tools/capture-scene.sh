@@ -126,7 +126,7 @@ case "$scene" in
     sleep 2
     demo_herdr pane send-keys "$picker_pane" right
     sleep 1
-    demo_herdr pane send-keys "$picker_pane" tab
+    demo_herdr pane send-keys "$picker_pane" tab right tab
     demo_herdr pane send-text "$picker_pane" preview
     sleep 3
     demo_herdr pane send-keys "$picker_pane" down enter
