@@ -102,7 +102,7 @@ case "$scene" in
     sleep 1
     demo_herdr pane send-text "$picker_pane" 'clear && herdr-deck'
     demo_herdr pane send-keys "$picker_pane" enter
-    wait_for "$picker_pane" 'hover to preview'
+    wait_for "$picker_pane" 'j/k move'
     start_scene scene-01-browse
     sleep 3
     demo_herdr pane send-keys "$picker_pane" down
@@ -117,8 +117,9 @@ case "$scene" in
     sleep 1
     demo_herdr pane send-text "$picker_pane" 'clear && herdr-deck'
     demo_herdr pane send-keys "$picker_pane" enter
-    wait_for "$picker_pane" 'hover to preview'
+    wait_for "$picker_pane" 'j/k move'
     start_scene scene-02-launch
+    demo_herdr pane send-keys "$picker_pane" /
     demo_herdr pane send-text "$picker_pane" projects/orbit
     sleep 3
     wait_for "$picker_pane" 'dev'
@@ -165,7 +166,7 @@ case "$scene" in
     sleep 1
     demo_herdr pane send-text "$picker_pane" 'clear && herdr-deck'
     demo_herdr pane send-keys "$picker_pane" enter
-    wait_for "$picker_pane" 'hover to preview'
+    wait_for "$picker_pane" 'j/k move'
     demo_herdr pane send-keys "$picker_pane" ctrl+s
     wait_for "$picker_pane" 'Add a merge-safe cleanup confirmation'
     start_scene scene-05-sessions
@@ -197,7 +198,8 @@ case "$scene" in
     sleep 1
     demo_herdr pane send-text "$picker_pane" 'clear && herdr-deck'
     demo_herdr pane send-keys "$picker_pane" enter
-    wait_for "$picker_pane" 'hover to preview'
+    wait_for "$picker_pane" 'j/k move'
+    demo_herdr pane send-keys "$picker_pane" /
     demo_herdr pane send-text "$picker_pane" unmerged
     wait_for "$picker_pane" 'unmerged-lab'
     start_scene scene-07-safety
@@ -208,6 +210,8 @@ case "$scene" in
     demo_herdr pane send-keys "$picker_pane" esc
     sleep 2
     demo_herdr pane send-keys "$picker_pane" ctrl+n
+    # herdr-deck expands this literal tilde.
+    # shellcheck disable=SC2088
     demo_herdr pane send-text "$picker_pane" '~/projects/new-console'
     wait_for "$picker_pane" 'new-console'
     sleep 4

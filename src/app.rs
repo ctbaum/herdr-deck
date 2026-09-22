@@ -55,18 +55,25 @@ impl Entry {
         }
     }
 
-    fn matches(&self, filter: &str) -> bool {
-        match_indices(&self.label, filter).is_some()
-            || match &self.kind {
-                EntryKind::Session(s) => {
-                    match_indices(s.agent.id(), filter).is_some()
-                        || match_indices(&s.cwd.to_string_lossy(), filter).is_some()
-                }
-                EntryKind::Cleanable { path, .. } => {
-                    match_indices(&path.to_string_lossy(), filter).is_some()
-                }
-                _ => false,
+    fn match_score(&self, filter: &str) -> Option<usize> {
+        let label = subsequence_score(&self.label, filter);
+        match &self.kind {
+            EntryKind::Session(s) => [
+                label,
+                subsequence_score(s.agent.id(), filter),
+                subsequence_score(&s.cwd.to_string_lossy(), filter),
+            ]
+            .into_iter()
+            .flatten()
+            .min(),
+            EntryKind::Cleanable { path, .. } => {
+                [label, subsequence_score(&path.to_string_lossy(), filter)]
+                    .into_iter()
+                    .flatten()
+                    .min()
             }
+            _ => label,
+        }
     }
 }
 
@@ -144,7 +151,7 @@ pub struct LaunchForm {
     /// Index into the filtered candidate list, not `candidates` itself.
     pub candidate_selected: Option<usize>,
     pub dangerous: bool,
-    pub field: usize, // 0 location, 1 agent, 2 worktree, 3 dangerous
+    pub field: usize, // 0 location, 1 agent, 2 worktree, 3 dangerous, 4 open
 }
 
 impl LaunchForm {
@@ -171,9 +178,9 @@ impl LaunchForm {
 
     fn move_field(&mut self, delta: isize) {
         let fields: &[usize] = if self.target == LaunchTarget::Worktree {
-            &[0, 1, 2, 3]
+            &[0, 1, 2, 3, 4]
         } else {
-            &[0, 1, 3]
+            &[0, 1, 3, 4]
         };
         let current = fields
             .iter()
@@ -305,6 +312,7 @@ pub enum Pending {
 pub struct App {
     pub entries: Vec<Entry>,
     pub filter: String,
+    pub searching: bool,
     pub filtered: Vec<usize>,
     pub selected: usize, // index into filtered
     pub mode: Mode,
@@ -336,24 +344,38 @@ enum CleanupUpdate {
     Done,
 }
 
-/// Case-insensitive subsequence match; tier order is preserved among matches
-/// (mirrors the tv channel's no_sort), so no scoring needed. Returns the char
-/// indices of the matched chars so the UI can highlight them (tv's match_fg).
+/// Case-insensitive subsequence match. Returns the tightest matching character
+/// indices so compact matches can be ranked first and highlighted accurately.
 pub fn match_indices(hay: &str, needle: &str) -> Option<Vec<usize>> {
-    let mut idx = Vec::new();
-    let mut ni = needle.chars().map(|c| c.to_ascii_lowercase());
-    let mut want = ni.next();
-    for (i, c) in hay.chars().enumerate() {
-        match want {
-            None => break,
-            Some(w) if c.to_ascii_lowercase() == w => {
-                idx.push(i);
-                want = ni.next();
-            }
-            _ => {}
-        }
+    let hay: Vec<_> = hay.chars().map(|c| c.to_ascii_lowercase()).collect();
+    let needle: Vec<_> = needle.chars().map(|c| c.to_ascii_lowercase()).collect();
+    if needle.is_empty() {
+        return Some(vec![]);
     }
-    want.is_none().then_some(idx)
+
+    hay.iter()
+        .enumerate()
+        .filter(|(_, c)| **c == needle[0])
+        .filter_map(|(start, _)| {
+            let mut indices = vec![start];
+            let mut from = start + 1;
+            for want in &needle[1..] {
+                let next = hay[from..].iter().position(|c| c == want)? + from;
+                indices.push(next);
+                from = next + 1;
+            }
+            Some(indices)
+        })
+        .min_by_key(|indices| (indices.last().unwrap() - indices[0], indices[0]))
+}
+
+fn subsequence_score(hay: &str, needle: &str) -> Option<usize> {
+    Some(
+        match_indices(hay, needle)?
+            .windows(2)
+            .map(|pair| pair[1] - pair[0] - 1)
+            .sum(),
+    )
 }
 
 impl App {
@@ -378,6 +400,7 @@ impl App {
         let mut app = App {
             entries: vec![],
             filter: String::new(),
+            searching: false,
             filtered: vec![],
             selected: 0,
             mode: Mode::List,
@@ -475,16 +498,21 @@ impl App {
     }
 
     pub fn apply_filter(&mut self) {
-        self.filtered = (0..self.entries.len())
-            .filter(|&i| {
+        let mut ranked: Vec<_> = (0..self.entries.len())
+            .filter_map(|i| {
                 let entry = &self.entries[i];
                 let agent_matches = match (&entry.kind, self.session_agent) {
                     (EntryKind::Session(s), Some(agent)) => s.agent == agent,
                     _ => true,
                 };
-                agent_matches && entry.matches(&self.filter)
+                agent_matches
+                    .then(|| entry.match_score(&self.filter))
+                    .flatten()
+                    .map(|score| (score, i))
             })
             .collect();
+        ranked.sort_by_key(|(score, _)| *score);
+        self.filtered = ranked.into_iter().map(|(_, i)| i).collect();
         self.selected = self.selected.min(self.filtered.len().saturating_sub(1));
     }
 
@@ -539,6 +567,7 @@ impl App {
     /// Open the launch form immediately and fetch its checkout candidates on
     /// a one-off worker thread; `drain_candidates` fills them in.
     fn open_launch_form(&mut self, dir: PathBuf, workspace: Option<String>) {
+        self.searching = false;
         let (tx, rx) = mpsc::channel();
         self.candidates_rx = Some(rx);
         let d = dir.clone();
@@ -629,10 +658,7 @@ impl App {
                 dangerous,
             ) {
                 Ok(()) => self.quit = true,
-                Err(e) => {
-                    self.status = Some(Status::err(e));
-                    self.mode = Mode::List;
-                }
+                Err(e) => self.status = Some(Status::err(e)),
             },
             Pending::Resume(session) => match ext::launch_session_deck(&session) {
                 Ok(()) => self.quit = true,
@@ -766,9 +792,15 @@ impl App {
 
     fn activate_hit_target(&mut self, target: Option<HitTarget>) {
         match target {
-            Some(HitTarget::Search | HitTarget::Results | HitTarget::LaunchCandidates) => {}
+            Some(HitTarget::Search) if matches!(self.mode, Mode::List) => {
+                self.searching = true;
+                self.selected = 0;
+            }
+            Some(HitTarget::Results) if matches!(self.mode, Mode::List) => self.searching = false,
+            Some(HitTarget::LaunchCandidates) => {}
             Some(HitTarget::Result(index)) if matches!(self.mode, Mode::List) => {
                 if index < self.filtered.len() {
+                    self.searching = false;
                     self.selected = index;
                     self.open_selected();
                 }
@@ -778,11 +810,17 @@ impl App {
                 self.cycle_session_agent(1)
             }
             Some(HitTarget::NewCockpit) => self.open_new_cockpit(),
-            Some(HitTarget::NewPath) => self.mode = Mode::NewPath { input: "~/".into() },
+            Some(HitTarget::NewPath) => {
+                self.searching = false;
+                self.mode = Mode::NewPath { input: "~/".into() };
+            }
             Some(HitTarget::Delete) => self.delete_selected(),
             Some(HitTarget::RemoveAll) => self.confirm_remove_all(),
             Some(HitTarget::Reload) => self.queue_reload(),
-            Some(HitTarget::Help) => self.mode = Mode::Help,
+            Some(HitTarget::Help) => {
+                self.searching = false;
+                self.mode = Mode::Help;
+            }
             Some(HitTarget::Quit) => self.quit = true,
             Some(HitTarget::LaunchSameCheckout) => {
                 if let Mode::Launch(form) = &mut self.mode {
@@ -846,6 +884,7 @@ impl App {
         self.source = source;
         self.session_agent = None;
         self.filter.clear();
+        self.searching = false;
         self.selected = 0;
         self.status = Some(Status::info(match source {
             Source::Projects => "loading projects…",
@@ -853,6 +892,22 @@ impl App {
             Source::Cleanup => "scanning repositories for cleanable worktrees…",
         }));
         self.pending = Some(Pending::Reload);
+    }
+
+    fn cycle_source(&mut self, delta: isize) {
+        let sources = [Source::Projects, Source::Sessions, Source::Cleanup];
+        let current = sources
+            .iter()
+            .position(|source| *source == self.source)
+            .unwrap_or(0);
+        self.switch_source(
+            sources[(current as isize + delta).rem_euclid(sources.len() as isize) as usize],
+        );
+    }
+
+    fn move_selection(&mut self, delta: isize) {
+        let last = self.filtered.len().saturating_sub(1);
+        self.selected = self.selected.saturating_add_signed(delta).min(last);
     }
 
     fn queue_reload(&mut self) {
@@ -876,6 +931,10 @@ impl App {
     }
 
     fn key_list(&mut self, key: KeyEvent) {
+        if self.searching {
+            self.key_search(key);
+            return;
+        }
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         match key.code {
             KeyCode::Esc => {
@@ -886,13 +945,25 @@ impl App {
                     self.apply_filter();
                 }
             }
-            KeyCode::Up => self.selected = self.selected.saturating_sub(1),
-            KeyCode::Down => {
-                self.selected = (self.selected + 1).min(self.filtered.len().saturating_sub(1))
+            KeyCode::Char('q') if !ctrl => self.quit = true,
+            KeyCode::Up | KeyCode::Char('k') if !ctrl => self.move_selection(-1),
+            KeyCode::Down | KeyCode::Char('j') if !ctrl => self.move_selection(1),
+            KeyCode::Char('k') if ctrl => self.move_selection(-1),
+            KeyCode::Char('j') if ctrl => self.move_selection(1),
+            KeyCode::PageUp => self.move_selection(-10),
+            KeyCode::PageDown => self.move_selection(10),
+            KeyCode::Home | KeyCode::Char('g') if !ctrl => self.selected = 0,
+            KeyCode::End | KeyCode::Char('G') if !ctrl => {
+                self.selected = self.filtered.len().saturating_sub(1)
             }
-            KeyCode::Char('k') if ctrl => self.selected = self.selected.saturating_sub(1),
-            KeyCode::Char('j') if ctrl => {
-                self.selected = (self.selected + 1).min(self.filtered.len().saturating_sub(1))
+            KeyCode::Char('h') if !ctrl => self.cycle_source(-1),
+            KeyCode::Char('l') if !ctrl => self.cycle_source(1),
+            KeyCode::Char('1') if !ctrl => self.switch_source(Source::Projects),
+            KeyCode::Char('2') if !ctrl => self.switch_source(Source::Sessions),
+            KeyCode::Char('3') if !ctrl => self.switch_source(Source::Cleanup),
+            KeyCode::Char('/') if !ctrl => {
+                self.searching = true;
+                self.selected = 0;
             }
             KeyCode::Enter => self.open_selected(),
             KeyCode::Char('s') if ctrl => {
@@ -919,13 +990,38 @@ impl App {
                 self.confirm_remove_all()
             }
             KeyCode::Char('r') if ctrl => self.queue_reload(),
-            KeyCode::Char('?') if self.filter.is_empty() => self.mode = Mode::Help,
+            KeyCode::Char('?') if !ctrl => self.mode = Mode::Help,
+            _ => {}
+        }
+    }
+
+    fn key_search(&mut self, key: KeyEvent) {
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        match key.code {
+            KeyCode::Esc => self.searching = false,
+            KeyCode::Up => self.move_selection(-1),
+            KeyCode::Down => self.move_selection(1),
+            KeyCode::Char('k') if ctrl => self.move_selection(-1),
+            KeyCode::Char('j') if ctrl => self.move_selection(1),
+            KeyCode::Home => self.selected = 0,
+            KeyCode::End => self.selected = self.filtered.len().saturating_sub(1),
+            KeyCode::Enter => {
+                self.searching = false;
+                self.open_selected();
+            }
             KeyCode::Backspace => {
                 self.filter.pop();
+                self.selected = 0;
+                self.apply_filter();
+            }
+            KeyCode::Char('u') if ctrl => {
+                self.filter.clear();
+                self.selected = 0;
                 self.apply_filter();
             }
             KeyCode::Char(c) if !ctrl => {
                 self.filter.push(c);
+                self.selected = 0;
                 self.apply_filter();
             }
             _ => {}
@@ -1124,48 +1220,61 @@ impl App {
     }
 
     fn key_launch(&mut self, key: KeyEvent) {
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         let n_agents = self.agents.len() + 1; // + "none"
         let agents = &self.agents;
         let Mode::Launch(form) = &mut self.mode else {
             return;
         };
+        let dangerous_toggleable = agents
+            .get(form.agent)
+            .is_some_and(|agent| ext::dangerous_toggleable(agent));
         match key.code {
             KeyCode::Esc => self.mode = Mode::List,
             KeyCode::Tab => form.move_field(1),
             KeyCode::BackTab => form.move_field(-1),
             KeyCode::Down if form.field == 2 => form.move_candidate(1),
             KeyCode::Up if form.field == 2 => form.move_candidate(-1),
-            KeyCode::Down => form.move_field(1),
-            KeyCode::Up => form.move_field(-1),
+            KeyCode::Char('j') if ctrl && form.field == 2 => form.move_candidate(1),
+            KeyCode::Char('k') if ctrl && form.field == 2 => form.move_candidate(-1),
+            KeyCode::Down | KeyCode::Char('j') if form.field != 2 => form.move_field(1),
+            KeyCode::Up | KeyCode::Char('k') if form.field != 2 => form.move_field(-1),
             KeyCode::Enter => {
                 if form.field == 2 && form.accept_candidate() {
                     return;
                 }
                 self.submit_launch();
             }
-            KeyCode::Left if form.field == 0 => form.set_target(LaunchTarget::SameCheckout),
-            KeyCode::Right if form.field == 0 => form.set_target(LaunchTarget::Worktree),
+            KeyCode::Left | KeyCode::Char('h') if form.field == 0 => {
+                form.set_target(LaunchTarget::SameCheckout)
+            }
+            KeyCode::Right | KeyCode::Char('l') if form.field == 0 => {
+                form.set_target(LaunchTarget::Worktree)
+            }
             KeyCode::Char(' ') if form.field == 0 => form.set_target(match form.target {
                 LaunchTarget::SameCheckout => LaunchTarget::Worktree,
                 LaunchTarget::Worktree => LaunchTarget::SameCheckout,
             }),
-            KeyCode::Left if form.field == 1 => form.agent = (form.agent + n_agents - 1) % n_agents,
-            KeyCode::Right | KeyCode::Char(' ') if form.field == 1 => {
+            KeyCode::Left | KeyCode::Char('h') if form.field == 1 => {
+                form.agent = (form.agent + n_agents - 1) % n_agents
+            }
+            KeyCode::Right | KeyCode::Char('l') | KeyCode::Char(' ') if form.field == 1 => {
                 form.agent = (form.agent + 1) % n_agents
             }
-            KeyCode::Char(' ')
-                if form.field == 3
-                    && agents
-                        .get(form.agent)
-                        .is_some_and(|a| ext::dangerous_toggleable(a)) =>
-            {
+            KeyCode::Left | KeyCode::Char('h') if form.field == 3 && dangerous_toggleable => {
+                form.dangerous = false
+            }
+            KeyCode::Right | KeyCode::Char('l') if form.field == 3 && dangerous_toggleable => {
+                form.dangerous = true
+            }
+            KeyCode::Char(' ') if form.field == 3 && dangerous_toggleable => {
                 form.dangerous = !form.dangerous
             }
             KeyCode::Backspace if form.field == 2 => {
                 form.branch.pop();
                 form.candidate_selected = None;
             }
-            KeyCode::Char(c) if form.field == 2 => {
+            KeyCode::Char(c) if form.field == 2 && !ctrl => {
                 form.branch.push(c);
                 form.candidate_selected = None;
             }
@@ -1248,6 +1357,7 @@ mod tests {
         App {
             entries: vec![],
             filter: String::new(),
+            searching: false,
             filtered: vec![],
             selected: 0,
             mode: Mode::List,
@@ -1361,9 +1471,11 @@ mod tests {
         form.move_field(1);
         assert_eq!(form.field, 3);
         form.move_field(1);
+        assert_eq!(form.field, 4);
+        form.move_field(1);
         assert_eq!(form.field, 0);
         form.move_field(-1);
-        assert_eq!(form.field, 3);
+        assert_eq!(form.field, 4);
 
         form.set_target(LaunchTarget::Worktree);
         form.move_field(1);
@@ -1394,6 +1506,7 @@ mod tests {
             app.status.as_ref().map(|status| status.msg.as_str()),
             Some("choose or enter a worktree")
         );
+        assert!(matches!(app.mode, Mode::Launch(_)));
 
         let mut form = launch_form(&["main"]);
         form.branch = "feature/new-cockpit".into();
@@ -1403,6 +1516,37 @@ mod tests {
             app.pending,
             Some(Pending::Launch { ref branch, .. }) if branch == "feature/new-cockpit"
         ));
+    }
+
+    #[test]
+    fn failed_launch_stays_open_for_correction() {
+        let mut app = test_app();
+        let dir = std::env::temp_dir().join(format!(
+            "herdr-deck-non-git-{}-{}",
+            std::process::id(),
+            std::thread::current().name().unwrap_or("test")
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut form = launch_form(&[]);
+        form.dir.clone_from(&dir);
+        form.branch = "topic".into();
+        app.mode = Mode::Launch(form);
+        app.pending = Some(Pending::Launch {
+            dir: dir.clone(),
+            workspace: None,
+            agent: None,
+            branch: "topic".into(),
+            dangerous: false,
+        });
+
+        app.run_pending();
+
+        assert!(matches!(app.mode, Mode::Launch(_)));
+        assert_eq!(
+            app.status.as_ref().map(|status| status.msg.as_str()),
+            Some("not a git repository (branch given)")
+        );
+        std::fs::remove_dir(dir).unwrap();
     }
 
     #[test]
@@ -1503,6 +1647,87 @@ mod tests {
             Some(Pending::Delete(DelAction::CloseWs(_)))
         ));
         assert!(matches!(app.mode, Mode::List));
+    }
+
+    #[test]
+    fn search_ranks_tight_matches_first() {
+        let mut app = test_app();
+        app.entries = [
+            "standalone-explanations",
+            "dotfiles/main",
+            "linear-algebra/main",
+            "linear-algebra/ct",
+        ]
+        .into_iter()
+        .map(|label| Entry {
+            label: label.into(),
+            kind: EntryKind::Dir(PathBuf::from(format!("/{label}"))),
+        })
+        .collect();
+        app.filter = "lin".into();
+
+        app.apply_filter();
+
+        assert_eq!(app.filtered, vec![2, 3, 0, 1]);
+        assert_eq!(match_indices("a---ab", "ab"), Some(vec![4, 5]));
+    }
+
+    #[test]
+    fn vim_navigation_and_search_input_do_not_conflict() {
+        let mut app = test_app();
+        app.entries = ["alpha", "juno", "zulu"]
+            .into_iter()
+            .map(|label| Entry {
+                label: label.into(),
+                kind: EntryKind::Dir(PathBuf::from(format!("/{label}"))),
+            })
+            .collect();
+        app.apply_filter();
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE));
+        assert_eq!(app.selected, 1);
+        app.handle_key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::NONE));
+        assert_eq!(app.selected, 0);
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE));
+        assert!(app.searching);
+        assert_eq!(app.filter, "j");
+        assert_eq!(app.filtered, vec![1]);
+
+        app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert!(!app.searching);
+        assert_eq!(app.filter, "j");
+        app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert!(app.filter.is_empty());
+        assert!(!app.quit);
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('l'), KeyModifiers::NONE));
+        assert_eq!(app.source, Source::Sessions);
+        assert!(matches!(app.pending, Some(Pending::Reload)));
+    }
+
+    #[test]
+    fn launch_form_uses_hjkl_until_the_text_field_is_focused() {
+        let mut app = test_app();
+        let mut form = launch_form(&["main"]);
+        form.set_target(LaunchTarget::SameCheckout);
+        app.mode = Mode::Launch(form);
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('l'), KeyModifiers::NONE));
+        let Mode::Launch(form) = &app.mode else {
+            panic!("launch form should remain open");
+        };
+        assert_eq!(form.target, LaunchTarget::Worktree);
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE));
+        let Mode::Launch(form) = &app.mode else {
+            panic!("launch form should remain open");
+        };
+        assert_eq!(form.field, 2);
+        assert_eq!(form.branch, "h");
     }
 
     #[test]

@@ -32,7 +32,7 @@ recreates each cockpit tab around that integration.
   top), then your zoxide directories organized by project: each Git project's
   root checkout leads, its linked worktrees follow, projects never interleave,
   and plain directories come last. Paths inside a checkout (`project/server`)
-  are never suggested. Type to filter. The preview shows a live 2D thumbnail
+  are never suggested. Press `/` to filter. The preview shows a live 2D thumbnail
   of each workspace's actual pane layout, or worktree status (branch, merge
   state, dirty flags), or a directory listing.
 - **Remotes**: set `HERDR_DECK_REMOTES` to a comma/space-separated list of SSH
@@ -62,7 +62,7 @@ recreates each cockpit tab around that integration.
   windows, tabs, extmarks, and plugin state. Claude or Codex is then resumed in
   a replacement pane through the surviving editor's IDE server.
 - **Resume**: `ctrl-s` switches to a separate session-history source, so past
-  conversations never pollute workspace/path search. Type searches the first
+  conversations never pollute workspace/path search. `/` searches the first
   prompt and project path; Tab filters by agent. Claude, Codex, and Pi sessions
   resume in a recreated deck rooted at the session's original directory.
   Cursor opens its native session picker in that deck because its CLI does
@@ -235,7 +235,6 @@ session plugins already cover that inside Neovim.
 | `HERDR_DECK_REMOTES` | user → herdr-deck | comma/space-separated SSH aliases shown as remote entries |
 | `HERDR_DECK_RUNTIME_DIR` | user → herdr-deck | optional parent directory for Neovim listener sockets |
 | `HERDR_NVIM_AGENT_START_TIMEOUT` | user → Neovim adapter | `herdr agent start` timeout in milliseconds; defaults to `30000` |
-| `HERDR_NAV_PASSTHROUGH_RE` | user → navigation plugin | lets `ctrl-j/k` reach herdr-deck when using seamless pane navigation |
 | `HERDR_*` | Herdr → processes | inherited session/socket identity; scrubbed only when opening a remote Ghostty window |
 
 ### Safety defaults
@@ -314,7 +313,7 @@ UI. herdr-deck exits when it loses focus.
 
 herdr-deck captures mouse input while it is open. Hover a result to preview it,
 click once to open it, and use the wheel to move through longer lists. The
-source tabs and every visible footer action are clickable. Launch forms,
+source tabs and every visible header action are clickable. Launch forms,
 confirmation dialogs, and help expose clickable controls; clicking outside a
 dialog cancels it.
 
@@ -330,27 +329,27 @@ Keyboard controls remain available alongside the mouse:
 
 | key | action |
 |-----|--------|
-| type | filter (`esc` clears) |
+| `j` / `k` | move through results |
+| `h` / `l` | previous / next source |
+| `g` / `G` | first / last result |
+| `1` / `2` / `3` | projects / sessions / cleanable |
+| `/` | enter search; type to filter, `esc` returns to navigation |
+| `↑` / `↓` or `ctrl-j/k` | move while searching |
 | `↵` | focus workspace / open remote window / new-cockpit form / resume session |
 | `ctrl-o` | new cockpit for the selected workspace, directory, or worktree |
-| `ctrl-s` | switch projects / past sessions source |
-| `ctrl-g` | toggle cleanable integrated-worktree source |
+| `ctrl-s` / `ctrl-g` | legacy session / cleanable source shortcuts |
 | `tab` / `shift-tab` | sessions: cycle agent filter |
 | `ctrl-n` | new directory, then new-cockpit form |
 | `ctrl-d` | close workspace / merge-gated worktree remove |
 | `ctrl-x` | cleanable source: remove all visible clean entries |
 | `ctrl-r` | reload |
-| `ctrl-j/k` | move selection (needs passthrough, see below) |
 | `?` | help |
-| `esc` | back / quit |
+| `q` | close |
+| `esc` | leave search / clear search / close |
 
-If you use a Herdr Ctrl-H/J/K/L pane-navigation plugin (for example,
-vim-herdr-navigation), add `herdr-deck` to its passthrough list so `ctrl-j/k`
-reach the picker:
-
-```sh
-export HERDR_NAV_PASSTHROUGH_RE='^herdr-deck$'
-```
+Launch forms use the same model: `j/k` changes fields and `h/l` changes the
+focused value. The worktree field remains normal text input; use arrows or
+`ctrl-j/k` for its candidate list.
 
 ## Opinionated setup and compatibility
 

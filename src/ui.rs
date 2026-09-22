@@ -1,4 +1,4 @@
-//! Rendering for the picker, preview, action footer, and modal overlays.
+//! Rendering for the picker, preview, command header, and modal overlays.
 //!
 //! The structure follows Herdr's native UI: plain accent borders, full-row
 //! selection, dimmed modal backdrops, and flat action buttons. Chrome uses the
@@ -16,12 +16,19 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Clear, List, ListItem, ListState, Paragraph, Wrap};
 
-const LIST_PCT: u16 = 23;
+const NAV_MIN: u16 = 28;
+const NAV_MAX: u16 = 52;
+
+fn navigator_width(width: u16) -> u16 {
+    (width / 3)
+        .clamp(NAV_MIN, NAV_MAX)
+        .min(width.saturating_sub(20))
+}
 
 /// Inner size of the preview panel for a given terminal size. This stays next
 /// to the layout so preview rendering and computation agree.
 pub fn preview_dims(w: u16, h: u16) -> (u16, u16) {
-    let right = w - w * LIST_PCT / 100;
+    let right = w.saturating_sub(navigator_width(w)).saturating_sub(1);
     (right.saturating_sub(2), h.saturating_sub(4))
 }
 
@@ -37,76 +44,107 @@ fn panel(title: Line<'static>, active: bool, palette: &Palette) -> Block<'static
         .title(title)
 }
 
+fn source_name(app: &App) -> String {
+    match (app.source, app.session_agent) {
+        (Source::Projects, _) => "projects".into(),
+        (Source::Sessions, Some(agent)) => format!("sessions · {}", agent.id()),
+        (Source::Sessions, None) => "sessions".into(),
+        (Source::Cleanup, _) => "cleanable".into(),
+    }
+}
+
 pub fn draw(f: &mut Frame, app: &mut App) {
     let palette = &app.palette;
     let area = f.area();
+    f.render_widget(
+        Block::new().style(Style::new().bg(palette.panel_bg).fg(palette.text)),
+        area,
+    );
+
     let mut hits = Vec::new();
-    let [main, status, footer] = Layout::vertical([
-        Constraint::Min(1),
+    let [header, main, footer] = Layout::vertical([
         Constraint::Length(1),
+        Constraint::Min(1),
         Constraint::Length(1),
     ])
     .areas(area);
-    let [left, right] =
-        Layout::horizontal([Constraint::Percentage(LIST_PCT), Constraint::Min(1)]).areas(main);
-    let [input_area, results_area] =
-        Layout::vertical([Constraint::Length(3), Constraint::Min(1)]).areas(left);
+    draw_header(f, header, app, &mut hits);
 
-    let source = match app.source {
-        Source::Projects => "projects",
-        Source::Sessions => app
-            .session_agent
-            .map(|agent| agent.id())
-            .unwrap_or("sessions"),
-        Source::Cleanup => "cleanable",
-    };
-    let input_block = panel(
-        Line::from(Span::styled(
-            format!(" {source} "),
-            Style::new().fg(palette.accent).bold(),
-        )),
-        matches!(app.mode, Mode::List),
-        palette,
-    );
-    let input_inner = input_block.inner(input_area);
-    f.render_widget(input_block, input_area);
-    f.render_widget(
-        Paragraph::new(Line::from(vec![
-            Span::styled(" / ", Style::new().fg(palette.accent).bold()),
-            Span::styled(app.filter.clone(), Style::new().fg(palette.text)),
-            Span::styled("█", Style::new().fg(palette.accent)),
-        ]))
-        .style(Style::new().bg(palette.panel_bg)),
-        input_inner,
-    );
+    let [left, _, right] = Layout::horizontal([
+        Constraint::Length(navigator_width(area.width)),
+        Constraint::Length(1),
+        Constraint::Min(1),
+    ])
+    .areas(main);
     let position = if app.filtered.is_empty() {
         0
     } else {
         app.selected + 1
     };
-    f.render_widget(
-        Paragraph::new(format!("{position} / {} ", app.filtered.len()))
-            .style(Style::new().fg(palette.overlay0).italic())
-            .right_aligned(),
-        input_inner,
-    );
-    hits.push(HitRegion::new(input_inner, HitTarget::Search));
-
-    let results_block = panel(
-        Line::from(Span::styled(" results ", Style::new().fg(palette.overlay0))),
-        false,
+    let navigator = panel(
+        Line::from(vec![
+            Span::styled(
+                format!(" {} ", source_name(app)),
+                Style::new().fg(palette.accent).bold(),
+            ),
+            Span::styled(
+                format!("{position}/{} ", app.filtered.len()),
+                Style::new().fg(palette.overlay0),
+            ),
+        ]),
+        true,
         palette,
     );
-    let list_area = results_block.inner(results_area);
-    f.render_widget(results_block, results_area);
+    let navigator_inner = navigator.inner(left);
+    f.render_widget(navigator, left);
+    let [search_area, list_area] =
+        Layout::vertical([Constraint::Length(1), Constraint::Min(1)]).areas(navigator_inner);
+
+    let query = if app.filter.is_empty() && !app.searching {
+        Span::styled("search", Style::new().fg(palette.overlay0))
+    } else {
+        Span::styled(app.filter.clone(), Style::new().fg(palette.text))
+    };
+    f.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled(
+                " / ",
+                Style::new()
+                    .fg(if app.searching {
+                        palette.accent
+                    } else {
+                        palette.overlay0
+                    })
+                    .bold(),
+            ),
+            query,
+            Span::styled(
+                if app.searching { "█" } else { "" },
+                Style::new().fg(palette.accent),
+            ),
+        ]))
+        .style(Style::new().bg(if app.searching {
+            palette.surface0
+        } else {
+            palette.panel_bg
+        })),
+        search_area,
+    );
+    hits.push(HitRegion::new(search_area, HitTarget::Search));
+
     let mut items: Vec<ListItem> = app
         .filtered
         .iter()
         .map(|&index| ListItem::new(entry_line(&app.entries[index], &app.filter, palette)))
         .collect();
-    if items.is_empty() && app.source == Source::Cleanup && app.cleanup_loading {
+    if items.is_empty() {
+        let message = if app.source == Source::Cleanup && app.cleanup_loading {
+            "  scanning repositories…"
+        } else {
+            "  no matches"
+        };
         items.push(ListItem::new(Line::from(Span::styled(
-            "  scanning repositories…",
+            message,
             Style::new().fg(palette.overlay0).dim(),
         ))));
     }
@@ -114,14 +152,9 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     let mut list_state = ListState::default().with_selected(selected);
     f.render_stateful_widget(
         List::new(items)
-            .highlight_symbol("→ ")
+            .highlight_symbol("› ")
             .style(Style::new().fg(palette.text).bg(palette.panel_bg))
-            .highlight_style(
-                Style::new()
-                    .fg(palette.contrast_fg())
-                    .bg(palette.accent)
-                    .bold(),
-            ),
+            .highlight_style(Style::new().bg(palette.surface1).bold()),
         list_area,
         &mut list_state,
     );
@@ -163,8 +196,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         }
     }
 
-    draw_status(f, status, app);
-    draw_footer(f, footer, app, &mut hits);
+    draw_footer(f, footer, app);
 
     if !matches!(app.mode, Mode::List) {
         // A modal owns input. Underlying controls remain visible but cannot be
@@ -182,59 +214,40 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     app.hit_regions = hits;
 }
 
-fn draw_status(f: &mut Frame, area: Rect, app: &App) {
-    let palette = &app.palette;
-    let line = match &app.status {
-        Some(status) if status.error => {
-            Line::styled(format!(" {}", status.msg), Style::new().fg(palette.red))
-        }
-        Some(status) => Line::styled(format!(" {}", status.msg), Style::new().fg(palette.yellow)),
-        None if app.source == Source::Cleanup && app.cleanup_loading => Line::styled(
-            " scanning repositories; results appear as they are found",
-            Style::new().fg(palette.yellow),
-        ),
-        None => Line::styled(
-            " hover to preview · click to open · wheel to move",
-            Style::new().fg(palette.overlay0),
-        ),
-    };
-    f.render_widget(Paragraph::new(line), area);
-}
-
-fn draw_footer(f: &mut Frame, area: Rect, app: &App, hits: &mut Vec<HitRegion>) {
-    let mut x = area.x;
+fn draw_header(f: &mut Frame, area: Rect, app: &App, hits: &mut Vec<HitRegion>) {
     let end = area.x.saturating_add(area.width);
+    let mut x = area.x;
     for (label, target, active) in [
         (
-            " projects ",
+            " 1 projects ",
             HitTarget::Source(Source::Projects),
             app.source == Source::Projects,
         ),
         (
-            " sessions ",
+            " 2 sessions ",
             HitTarget::Source(Source::Sessions),
             app.source == Source::Sessions,
         ),
         (
-            " cleanable ",
+            " 3 cleanable ",
             HitTarget::Source(Source::Cleanup),
             app.source == Source::Cleanup,
         ),
     ] {
-        x = draw_footer_button(f, area.y, x, end, label, target, active, app, hits);
+        x = draw_inline_button(f, area.y, x, end, label, target, active, app, hits);
     }
 
     x = x.saturating_add(1);
     let mut actions = Vec::new();
     if app.selected_entry().and_then(Entry::launch_dir).is_some() {
-        actions.push((" ^o new cockpit ", HitTarget::NewCockpit));
+        actions.push((" ^o cockpit ", HitTarget::NewCockpit));
     }
     match app.source {
         Source::Projects => {
-            actions.push((" ^n new dir ", HitTarget::NewPath));
+            actions.push((" ^n mkdir ", HitTarget::NewPath));
             actions.push((" ^d delete ", HitTarget::Delete));
         }
-        Source::Sessions => actions.push((" ⇥ agent ", HitTarget::CycleAgent)),
+        Source::Sessions => actions.push((" tab agent ", HitTarget::CycleAgent)),
         Source::Cleanup => {
             actions.push((" ^d delete ", HitTarget::Delete));
             actions.push((" ^x remove all ", HitTarget::RemoveAll));
@@ -243,15 +256,81 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App, hits: &mut Vec<HitRegion>) 
     actions.extend([
         (" ^r reload ", HitTarget::Reload),
         (" ? help ", HitTarget::Help),
-        (" esc close ", HitTarget::Quit),
+        (" q close ", HitTarget::Quit),
     ]);
     for (label, target) in actions {
-        x = draw_footer_button(f, area.y, x, end, label, target, false, app, hits);
+        x = draw_inline_button(f, area.y, x, end, label, target, false, app, hits);
     }
 }
 
+fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
+    let palette = &app.palette;
+    if let Some(status) = &app.status
+        && !matches!(app.mode, Mode::Launch(_))
+    {
+        let color = if status.error {
+            palette.red
+        } else {
+            palette.yellow
+        };
+        f.render_widget(
+            Paragraph::new(format!(" {}", status.msg)).style(Style::new().fg(color)),
+            area,
+        );
+        return;
+    }
+    if app.source == Source::Cleanup && app.cleanup_loading {
+        f.render_widget(
+            Paragraph::new(" scanning repositories; results appear as they are found")
+                .style(Style::new().fg(palette.yellow)),
+            area,
+        );
+        return;
+    }
+
+    let mut hints = if app.searching {
+        vec![
+            ("type", "filter"),
+            ("↑↓/^j^k", "move"),
+            ("↵", "open"),
+            ("^u", "clear"),
+            ("esc", "navigation"),
+        ]
+    } else {
+        vec![
+            ("j/k", "move"),
+            ("h/l", "source"),
+            ("g/G", "first/last"),
+            ("/", "search"),
+            ("↵", "open"),
+        ]
+    };
+    if !app.searching {
+        match app.source {
+            Source::Projects => {
+                hints.extend([("^o", "cockpit"), ("^n", "mkdir"), ("^d", "delete")])
+            }
+            Source::Sessions => hints.push(("tab", "agent")),
+            Source::Cleanup => hints.extend([("^d", "delete"), ("^x", "remove all")]),
+        }
+        hints.extend([("?", "help"), ("q", "close")]);
+    }
+    let mut spans = vec![Span::styled(
+        if app.searching { " SEARCH  " } else { " NAV  " },
+        Style::new().fg(palette.accent).bold(),
+    )];
+    for (key, description) in hints {
+        spans.push(Span::styled(key, Style::new().fg(palette.text).bold()));
+        spans.push(Span::styled(
+            format!(" {description}  "),
+            Style::new().fg(palette.overlay0),
+        ));
+    }
+    f.render_widget(Paragraph::new(Line::from(spans)), area);
+}
+
 #[allow(clippy::too_many_arguments)]
-fn draw_footer_button(
+fn draw_inline_button(
     f: &mut Frame,
     y: u16,
     x: u16,
@@ -518,6 +597,16 @@ fn draw_launch(
         .style(Style::new().fg(palette.text).bold()),
         Rect::new(inner.x, inner.y, inner.width, 1),
     );
+    if let Some(status) = &app.status {
+        f.render_widget(
+            Paragraph::new(format!(" ! {}", status.msg)).style(Style::new().fg(if status.error {
+                palette.red
+            } else {
+                palette.yellow
+            })),
+            Rect::new(inner.x, inner.y + 1, inner.width, 1),
+        );
+    }
 
     let mut y = inner.y + 2;
     f.render_widget(
@@ -729,10 +818,12 @@ fn draw_launch(
         hits.push(HitRegion::new(dangerous_rect, dangerous_target));
     }
     y += 1;
-    let help = if worktree {
-        " ^ default · - previous · @ current · pr:N GitHub · mr:N GitLab"
+    let help = if form.field == 4 {
+        " enter to open · shift-tab back · esc cancel"
+    } else if worktree && form.field == 2 {
+        " type branch, ^, -, @, pr:N, or mr:N · ↑/↓ candidates · tab next"
     } else {
-        " ←/→ changes location · tab moves between fields"
+        " j/k fields · h/l change · space toggle · tab next"
     };
     f.render_widget(
         Paragraph::new(help).style(Style::new().fg(palette.overlay0)),
@@ -744,13 +835,18 @@ fn draw_launch(
     } else {
         "↵ open cockpit"
     };
-    let buttons = button_row(inner, &[primary, "esc cancel"]);
+    let primary_label = if form.field == 4 {
+        format!("› {primary} ‹")
+    } else {
+        primary.into()
+    };
+    let buttons = button_row(inner, &[&primary_label, "esc cancel"]);
     draw_button(
         f,
         buttons[0],
-        primary,
+        &primary_label,
         HitTarget::Submit,
-        Some(palette.accent),
+        (form.field == 4).then_some(palette.accent),
         app,
         hits,
     );
@@ -860,27 +956,31 @@ fn draw_help(f: &mut Frame, area: Rect, app: &App, hits: &mut Vec<HitRegion>) {
     let palette = &app.palette;
     let rows = [
         ("mouse", "hover to preview; click to open; wheel to move"),
-        ("type", "filter the list (esc clears)"),
-        ("^s", "switch projects / agent sessions source"),
-        ("^g", "toggle cleanable integrated-worktree source"),
-        ("⇥", "sessions: filter by agent (shift-tab reverses)"),
+        ("j / k", "move through results"),
+        ("h / l", "previous / next source"),
+        ("g / G", "first / last result"),
+        ("1 / 2 / 3", "projects / sessions / cleanable"),
+        ("/", "search; esc returns to navigation"),
+        ("^j / ^k", "move while typing a search"),
         (
             "↵",
             "workspace: focus · remote: open · directory: new cockpit",
         ),
+        ("tab", "sessions: cycle agent filter (shift-tab reverses)"),
         ("^o", "new cockpit for the selected local project"),
         ("^n", "new directory, then new-cockpit form"),
         ("^d", "workspace: close · worktree: merge-gated remove"),
         ("^x", "cleanable: remove all visible clean entries"),
         ("^r", "reload the list"),
-        ("esc", "back / quit"),
-        ("", "worktree = choose one or enter a branch/PR/wt shortcut"),
+        ("q", "close"),
+        ("esc", "leave search / clear search / close"),
+        ("", "launch form: j/k fields, h/l changes the value"),
         ("", "dangerous mode starts enabled; disable before launch"),
     ];
     let Some((_, inner)) = modal_shell(
         f,
         area,
-        68,
+        72,
         rows.len() as u16 + 5,
         palette.accent,
         palette,
@@ -899,7 +999,7 @@ fn draw_help(f: &mut Frame, area: Rect, app: &App, hits: &mut Vec<HitRegion>) {
         }
         f.render_widget(
             Paragraph::new(Line::from(vec![
-                Span::styled(format!(" {key:7}"), Style::new().fg(palette.accent).bold()),
+                Span::styled(format!(" {key:9}"), Style::new().fg(palette.accent).bold()),
                 Span::styled((*description).to_string(), Style::new().fg(palette.text)),
             ])),
             Rect::new(inner.x, y, inner.width, 1),
@@ -935,6 +1035,13 @@ mod tests {
         }
         assert_eq!(rows.iter().map(Vec::len).sum::<usize>(), agents.len() + 1);
         assert!(rows[0][0].text.contains("(●) claude"));
+    }
+
+    #[test]
+    fn navigator_stays_sidebar_sized_on_wide_screens() {
+        assert_eq!(navigator_width(300), NAV_MAX);
+        assert_eq!(navigator_width(90), 30);
+        assert_eq!(navigator_width(40), 20);
     }
 
     #[test]
