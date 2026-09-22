@@ -8,7 +8,6 @@ The companion workspace launcher for
 [herdr-agents.nvim](https://github.com/ctbaum/herdr-agents.nvim): choose a
 project, Git worktree, or saved Claude/Codex session and open it as a ready-made
 [Herdr](https://herdr.dev) deck with Neovim, a connected agent, and a shell.
-Git stays in the same cockpit through Neogit.
 
 herdr-deck runs inside a Herdr pane and drives everything by shelling out to the
 `herdr` and [`wt` (worktrunk)](https://github.com/max-sixty/worktrunk) CLIs.
@@ -39,8 +38,8 @@ recreates each cockpit tab around that integration.
   aliases and each remote Herdr server becomes an entry (`⇄`); Enter opens a
   `herdr --remote` thin client in its own terminal window, leaving the local
   session alone. Running it inside a pane would nest Herdr in Herdr.
-- **Open**: Enter on a live workspace focuses it. `ctrl-o` (or the visible
-  **new cockpit** action) opens another independent editor, agent, and shell as
+- **Open**: Enter on a live workspace focuses it. `ctrl-o`
+  (**new cockpit** action) opens another independent editor, agent, and shell as
   a neighboring tab in that workspace; the checkout, files, and Git state
   remain shared. Enter on a worktree or directory opens the same form. Choose
   **same checkout**, or switch to **worktree** to select an existing checkout or
@@ -116,17 +115,17 @@ or modify Neovim plugins; the editor bridge is a separate conventional plugin.
 
 ### Feature dependencies
 
-| feature | dependency | behavior when missing |
-|---|---|---|
-| linked-worktree create/remove | [worktrunk](https://github.com/max-sixty/worktrunk) (`wt`) with JSON output | ordinary directory decks still work; worktree actions and status do not |
-| directory discovery | `zoxide` and/or `fd` | that source becomes sparse or empty |
-| directory preview | `eza`, with `ls` fallback | falls back to plain `ls -la` |
-| Claude deck | Claude Code CLI + [herdr-agents.nvim](https://github.com/ctbaum/herdr-agents.nvim) + claudecode.nvim | `nvim` opens, but Claude does not auto-start |
-| Codex deck | Codex CLI + [herdr-agents.nvim](https://github.com/ctbaum/herdr-agents.nvim) + codex.nvim | `nvim` opens, but Codex does not auto-start |
-| Pi deck | Pi CLI + herdr-agents.nvim with `pi.enabled = true` + pi-ide.nvim + the Pi `pi-ide` extension | Pi does not auto-start or connect to editor review |
-| live agent-pane identification | `pgrep`, `ps` or Linux `/proc`, `grep`, `sed`, `tr`, `sh` | stable-name relaunch recovery still works, but live process matching is unavailable |
-| saved sessions | agent-owned local history files | only histories found at the supported hardcoded locations appear |
-| remote entries | macOS `open` + Ghostty | remote launch is unavailable on other terminals/platforms |
+| feature                        | dependency                                                                                           | behavior when missing                                                               |
+| ------------------------------ | ---------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| linked-worktree create/remove  | [worktrunk](https://github.com/max-sixty/worktrunk) (`wt`) with JSON output                          | ordinary directory decks still work; worktree actions and status do not             |
+| directory discovery            | `zoxide` and/or `fd`                                                                                 | that source becomes sparse or empty                                                 |
+| directory preview              | `eza`, with `ls` fallback                                                                            | falls back to plain `ls -la`                                                        |
+| Claude deck                    | Claude Code CLI + [herdr-agents.nvim](https://github.com/ctbaum/herdr-agents.nvim) + claudecode.nvim | `nvim` opens, but Claude does not auto-start                                        |
+| Codex deck                     | Codex CLI + [herdr-agents.nvim](https://github.com/ctbaum/herdr-agents.nvim) + codex.nvim            | `nvim` opens, but Codex does not auto-start                                         |
+| Pi deck                        | Pi CLI + herdr-agents.nvim with `pi.enabled = true` + pi-ide.nvim + the Pi `pi-ide` extension        | Pi does not auto-start or connect to editor review                                  |
+| live agent-pane identification | `pgrep`, `ps` or Linux `/proc`, `grep`, `sed`, `tr`, `sh`                                            | stable-name relaunch recovery still works, but live process matching is unavailable |
+| saved sessions                 | agent-owned local history files                                                                      | only histories found at the supported hardcoded locations appear                    |
+| remote entries                 | macOS `open` + Ghostty                                                                               | remote launch is unavailable on other terminals/platforms                           |
 
 herdr-deck currently reads saved sessions from `~/.claude/projects`,
 `~/.codex/sessions`, and `~/.pi/agent/sessions`. Cursor exposes its sessions
@@ -183,11 +182,11 @@ connection details against local process environments. It reads them with
 `pgrep` and `ps`, or from `/proc` on Linux. herdr-deck forwards the launch
 arguments and IDE environment variables to the new Herdr pane.
 
-| variable | value set by herdr-deck |
-|---|---|
-| `HERDR_NVIM_AGENT` | `claude`, `codex`, or `pi` |
+| variable                     | value set by herdr-deck                                                                           |
+| ---------------------------- | ------------------------------------------------------------------------------------------------- |
+| `HERDR_NVIM_AGENT`           | `claude`, `codex`, or `pi`                                                                        |
 | `HERDR_NVIM_AGENT_ARGS_JSON` | JSON array containing the dangerous-mode flag when enabled and any saved-session resume arguments |
-| `HERDR_NVIM_AGENT_RECOVER` | `1`, allowing a relaunched editor to replace and resume its disconnected agent |
+| `HERDR_NVIM_AGENT_RECOVER`   | `1`, allowing a relaunched editor to replace and resume its disconnected agent                    |
 
 This ordering matters: both plugins create an editor-side server and
 pass connection variables to the agent process. Starting the CLI independently
@@ -226,16 +225,16 @@ session plugins already cover that inside Neovim.
 
 ### Environment variables
 
-| variable | direction | purpose |
-|---|---|---|
-| `HERDR_NVIM_AGENT`, `HERDR_NVIM_AGENT_ARGS_JSON` | herdr-deck → cockpit tab | launcher-neutral editor-agent startup contract described above |
-| `HERDR_NVIM_AGENT_RECOVER` | herdr-deck → cockpit tab | opt in to safe same-editor agent recovery on automatic startup |
-| `HERDR_NVIM_AGENT_RECOVER_WAIT_MS` | restored editor process → Neovim adapter | one-shot delay while Herdr restores native agents; automatic restores use `5000` without retaining it in the pane shell |
-| `NVIM_LISTEN_ADDRESS` | herdr-deck → editor pane shell | keep plain `nvim` relaunches on the deck's recorded RPC socket |
-| `HERDR_DECK_REMOTES` | user → herdr-deck | comma/space-separated SSH aliases shown as remote entries |
-| `HERDR_DECK_RUNTIME_DIR` | user → herdr-deck | optional parent directory for Neovim listener sockets |
-| `HERDR_NVIM_AGENT_START_TIMEOUT` | user → Neovim adapter | `herdr agent start` timeout in milliseconds; defaults to `30000` |
-| `HERDR_*` | Herdr → processes | inherited session/socket identity; scrubbed only when opening a remote Ghostty window |
+| variable                                         | direction                                | purpose                                                                                                                 |
+| ------------------------------------------------ | ---------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `HERDR_NVIM_AGENT`, `HERDR_NVIM_AGENT_ARGS_JSON` | herdr-deck → cockpit tab                 | launcher-neutral editor-agent startup contract described above                                                          |
+| `HERDR_NVIM_AGENT_RECOVER`                       | herdr-deck → cockpit tab                 | opt in to safe same-editor agent recovery on automatic startup                                                          |
+| `HERDR_NVIM_AGENT_RECOVER_WAIT_MS`               | restored editor process → Neovim adapter | one-shot delay while Herdr restores native agents; automatic restores use `5000` without retaining it in the pane shell |
+| `NVIM_LISTEN_ADDRESS`                            | herdr-deck → editor pane shell           | keep plain `nvim` relaunches on the deck's recorded RPC socket                                                          |
+| `HERDR_DECK_REMOTES`                             | user → herdr-deck                        | comma/space-separated SSH aliases shown as remote entries                                                               |
+| `HERDR_DECK_RUNTIME_DIR`                         | user → herdr-deck                        | optional parent directory for Neovim listener sockets                                                                   |
+| `HERDR_NVIM_AGENT_START_TIMEOUT`                 | user → Neovim adapter                    | `herdr agent start` timeout in milliseconds; defaults to `30000`                                                        |
+| `HERDR_*`                                        | Herdr → processes                        | inherited session/socket identity; scrubbed only when opening a remote Ghostty window                                   |
 
 ### Safety defaults
 
@@ -327,25 +326,25 @@ Keyboard controls remain available alongside the mouse:
 
 ## Keys
 
-| key | action |
-|-----|--------|
-| `j` / `k` | move through results |
-| `h` / `l` | previous / next source |
-| `g` / `G` | first / last result |
-| `1` / `2` / `3` | projects / sessions / cleanable |
-| `/` | enter search; type to filter, `esc` returns to navigation |
-| `↑` / `↓` or `ctrl-j/k` | move while searching |
-| `↵` | focus workspace / open remote window / new-cockpit form / resume session |
-| `ctrl-o` | new cockpit for the selected workspace, directory, or worktree |
-| `ctrl-s` / `ctrl-g` | legacy session / cleanable source shortcuts |
-| `tab` / `shift-tab` | sessions: cycle agent filter |
-| `ctrl-n` | new directory, then new-cockpit form |
-| `ctrl-d` | close workspace / merge-gated worktree remove |
-| `ctrl-x` | cleanable source: remove all visible clean entries |
-| `ctrl-r` | reload |
-| `?` | help |
-| `q` | close |
-| `esc` | leave search / clear search / close |
+| key                     | action                                                                   |
+| ----------------------- | ------------------------------------------------------------------------ |
+| `j` / `k`               | move through results                                                     |
+| `h` / `l`               | previous / next source                                                   |
+| `g` / `G`               | first / last result                                                      |
+| `1` / `2` / `3`         | projects / sessions / cleanable                                          |
+| `/`                     | enter search; type to filter, `esc` returns to navigation                |
+| `↑` / `↓` or `ctrl-j/k` | move while searching                                                     |
+| `↵`                     | focus workspace / open remote window / new-cockpit form / resume session |
+| `ctrl-o`                | new cockpit for the selected workspace, directory, or worktree           |
+| `ctrl-s` / `ctrl-g`     | legacy session / cleanable source shortcuts                              |
+| `tab` / `shift-tab`     | sessions: cycle agent filter                                             |
+| `ctrl-n`                | new directory, then new-cockpit form                                     |
+| `ctrl-d`                | close workspace / merge-gated worktree remove                            |
+| `ctrl-x`                | cleanable source: remove all visible clean entries                       |
+| `ctrl-r`                | reload                                                                   |
+| `?`                     | help                                                                     |
+| `q`                     | close                                                                    |
+| `esc`                   | leave search / clear search / close                                      |
 
 Launch forms use the same model: `j/k` changes fields and `h/l` changes the
 focused value. The worktree field remains normal text input; use arrows or
