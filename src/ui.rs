@@ -975,14 +975,12 @@ fn draw_help(f: &mut Frame, area: Rect, app: &App, hits: &mut Vec<HitRegion>) {
         ("?", "show this help"),
         ("q / ^c", "close"),
         ("esc", "back · clear search · close"),
-        ("launch", "j/k fields · h/l, arrows, or space change value"),
-        ("checkout", "type to filter · ↑/↓ or ^j/^k selects"),
         ("", "dangerous mode starts enabled; disable before launch"),
     ];
     let Some((_, inner)) = modal_shell(
         f,
         area,
-        72,
+        76,
         rows.len() as u16 + 5,
         palette.accent,
         palette,
@@ -1001,7 +999,10 @@ fn draw_help(f: &mut Frame, area: Rect, app: &App, hits: &mut Vec<HitRegion>) {
         }
         f.render_widget(
             Paragraph::new(Line::from(vec![
-                Span::styled(format!(" {key:9}"), Style::new().fg(palette.accent).bold()),
+                Span::styled(
+                    format!(" {key:16}  "),
+                    Style::new().fg(palette.accent).bold(),
+                ),
                 Span::styled((*description).to_string(), Style::new().fg(palette.text)),
             ])),
             Rect::new(inner.x, y, inner.width, 1),
