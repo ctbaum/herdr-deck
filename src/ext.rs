@@ -716,9 +716,19 @@ pub fn wt_remove(path: &Path, force: bool) -> bool {
     let cleanup = removal_cleanup(path);
     let p = path.to_string_lossy();
     let ok = if force {
-        out(&["wt", "-C", &p, "remove", "-f", "-D"]).is_some()
+        out(&[
+            "wt",
+            "-C",
+            &p,
+            "remove",
+            "--foreground",
+            "--yes",
+            "-f",
+            "-D",
+        ])
+        .is_some()
     } else {
-        out(&["wt", "-C", &p, "remove"]).is_some()
+        out(&["wt", "-C", &p, "remove", "--foreground", "--yes"]).is_some()
     };
     if ok {
         for workspace in cleanup.workspaces {

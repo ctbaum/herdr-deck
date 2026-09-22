@@ -931,11 +931,15 @@ impl App {
     }
 
     fn key_list(&mut self, key: KeyEvent) {
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        if key.code == KeyCode::Char('x') && ctrl && self.source == Source::Cleanup {
+            self.confirm_remove_all();
+            return;
+        }
         if self.searching {
             self.key_search(key);
             return;
         }
-        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         match key.code {
             KeyCode::Esc => {
                 if self.filter.is_empty() {
@@ -986,9 +990,6 @@ impl App {
             KeyCode::Char('o') if ctrl => self.open_new_cockpit(),
             KeyCode::Char('n') if ctrl => self.mode = Mode::NewPath { input: "~/".into() },
             KeyCode::Char('d') if ctrl => self.delete_selected(),
-            KeyCode::Char('x') if ctrl && self.source == Source::Cleanup => {
-                self.confirm_remove_all()
-            }
             KeyCode::Char('r') if ctrl => self.queue_reload(),
             KeyCode::Char('?') if !ctrl => self.mode = Mode::Help,
             _ => {}
@@ -1118,12 +1119,6 @@ impl App {
     }
 
     fn confirm_remove_all(&mut self) {
-        if self.cleanup_loading {
-            self.status = Some(Status::info(
-                "wait for the repository scan to finish before removing all",
-            ));
-            return;
-        }
         let mut paths = Vec::new();
         let mut projects = HashSet::new();
         let mut dirty = 0;
@@ -1705,6 +1700,57 @@ mod tests {
         app.handle_key(KeyEvent::new(KeyCode::Char('l'), KeyModifiers::NONE));
         assert_eq!(app.source, Source::Sessions);
         assert!(matches!(app.pending, Some(Pending::Reload)));
+    }
+
+    #[test]
+    fn ctrl_x_removes_filtered_clean_entries_while_cleanup_is_still_loading() {
+        let mut app = test_app();
+        app.source = Source::Cleanup;
+        app.searching = true;
+        app.cleanup_loading = true;
+        app.entries = vec![
+            Entry {
+                label: "repo/landed".into(),
+                kind: EntryKind::Cleanable {
+                    path: PathBuf::from("/repo.wt/landed"),
+                    clean: true,
+                },
+            },
+            Entry {
+                label: "other/landed".into(),
+                kind: EntryKind::Cleanable {
+                    path: PathBuf::from("/other.wt/landed"),
+                    clean: true,
+                },
+            },
+            Entry {
+                label: "repo/dirty".into(),
+                kind: EntryKind::Cleanable {
+                    path: PathBuf::from("/repo.wt/dirty"),
+                    clean: false,
+                },
+            },
+        ];
+        app.filter = "repo".into();
+        app.apply_filter();
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::CONTROL));
+
+        let Mode::ConfirmDelete {
+            msg,
+            action: DelAction::RemoveAll(paths),
+        } = &app.mode
+        else {
+            panic!("ctrl-x should confirm removal");
+        };
+        assert_eq!(paths, &[PathBuf::from("/repo.wt/landed")]);
+        assert!(msg.contains("1 dirty will be skipped"));
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE));
+        assert!(matches!(
+            app.pending,
+            Some(Pending::Delete(DelAction::RemoveAll(_)))
+        ));
     }
 
     #[test]
