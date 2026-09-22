@@ -1029,16 +1029,18 @@ fn available_workspace_label(base: &str, workspaces: &[Ws]) -> String {
         .unwrap()
 }
 
-/// Build a deck workspace: nvim + agent + full-width terminal.
-/// `agent` is a detected agent name, or None for a plain deck.
-/// Returns Ok(()) once the workspace is focused (caller should quit).
+/// Build a cockpit tab: nvim + agent + full-width terminal.
+/// `agent` is a detected agent name, or None for a plain deck. When supplied,
+/// `workspace` receives a neighboring tab for a same-checkout launch.
+/// Returns Ok(()) once the new tab is focused (caller should quit).
 pub fn launch_deck(
     dir: &Path,
+    workspace: Option<&str>,
     agent: Option<&str>,
     branch: &str,
     dangerous: bool,
 ) -> Result<(), String> {
-    launch_deck_inner(dir, agent, branch, dangerous, None)
+    launch_deck_inner(dir, workspace, agent, branch, dangerous, None)
 }
 
 /// Recreate the normal deck at a saved session's original cwd, with
@@ -1052,6 +1054,7 @@ pub fn launch_session_deck(session: &Session) -> Result<(), String> {
     }
     launch_deck_inner(
         &session.cwd,
+        None,
         Some(session.agent.id()),
         "",
         true,
@@ -1061,6 +1064,7 @@ pub fn launch_session_deck(session: &Session) -> Result<(), String> {
 
 fn launch_deck_inner(
     dir: &Path,
+    workspace: Option<&str>,
     agent: Option<&str>,
     branch: &str,
     dangerous: bool,
@@ -1137,21 +1141,22 @@ fn launch_deck_inner(
     }
 
     let live = workspaces();
-    // Resuming the same conversation remains idempotent. Ordinary launches
-    // deliberately get another cockpit, even when they share one checkout.
+    // Resuming the same conversation remains idempotent. A same-checkout
+    // cockpit requested from a live workspace becomes its neighboring tab.
     if resume.is_some()
         && let Some(existing) = live.iter().find(|workspace| workspace.label == label)
     {
         focus_workspace(&existing.id);
         return Ok(());
     }
-    if resume.is_none() {
+    let workspace = workspace.filter(|_| resume.is_none() && branch.is_empty());
+    if resume.is_none() && workspace.is_none() {
         label = available_workspace_label(&label, &live);
     }
 
-    // Env via `workspace create --env` (a `pane run` prefix would be echoed
-    // onto the pane). Editor-integrated agents start through nvim so their IDE
-    // servers exist before the Herdr terminal provider launches the agent.
+    // Env belongs to the new tab's root process (a `pane run` prefix would be
+    // echoed onto the pane). Editor-integrated agents start through nvim so
+    // their IDE servers exist before the Herdr terminal provider launches them.
     let launch_args = match agent {
         Some("claude") => claude_launch_args(resume, dangerous),
         Some("codex") => codex_launch_args(resume, dangerous),
@@ -1161,18 +1166,36 @@ fn launch_deck_inner(
     let args_json = serde_json::to_string(&launch_args)
         .map_err(|error| format!("could not encode editor-agent arguments: {error}"))?;
     let args_env = format!("HERDR_NVIM_AGENT_ARGS_JSON={args_json}");
-    let mut create: Vec<&str> = vec![
-        "herdr",
-        "workspace",
-        "create",
-        "--cwd",
-        &target_str,
-        "--label",
-        &label,
-        "--no-focus",
-        "--env",
-        "HERDR_NVIM_AGENT_RECOVER=1",
-    ];
+    let new_workspace = workspace.is_none();
+    let mut create: Vec<&str> = if let Some(workspace) = workspace {
+        vec![
+            "herdr",
+            "tab",
+            "create",
+            "--workspace",
+            workspace,
+            "--cwd",
+            &target_str,
+            "--label",
+            &tab_name,
+            "--no-focus",
+            "--env",
+            "HERDR_NVIM_AGENT_RECOVER=1",
+        ]
+    } else {
+        vec![
+            "herdr",
+            "workspace",
+            "create",
+            "--cwd",
+            &target_str,
+            "--label",
+            &label,
+            "--no-focus",
+            "--env",
+            "HERDR_NVIM_AGENT_RECOVER=1",
+        ]
+    };
     if agent == Some("claude") {
         create.extend(["--env", "HERDR_NVIM_AGENT=claude", "--env", &args_env]);
     } else if agent == Some("codex") {
@@ -1180,7 +1203,11 @@ fn launch_deck_inner(
     } else if agent == Some("pi") {
         create.extend(["--env", "HERDR_NVIM_AGENT=pi", "--env", &args_env]);
     }
-    let created = json(&create).ok_or("herdr workspace create failed")?;
+    let created = json(&create).ok_or(if new_workspace {
+        "herdr workspace create failed"
+    } else {
+        "herdr tab create failed"
+    })?;
     let root_pane = &created["result"]["root_pane"];
     let ws = root_pane["workspace_id"]
         .as_str()
@@ -1188,9 +1215,20 @@ fn launch_deck_inner(
     let root = root_pane["pane_id"]
         .as_str()
         .ok_or("no pane_id in create result")?;
-    let root_tab = root_pane["tab_id"].as_str().unwrap_or("");
+    let root_tab = root_pane["tab_id"]
+        .as_str()
+        .ok_or("no tab_id in create result")?;
 
-    out(&["herdr", "tab", "rename", root_tab, &tab_name]);
+    if new_workspace {
+        out(&["herdr", "tab", "rename", root_tab, &tab_name]);
+    }
+    let cleanup = || {
+        if new_workspace {
+            close_workspace(ws);
+        } else {
+            out(&["herdr", "tab", "close", root_tab]);
+        }
+    };
 
     // Full-width terminal on the bottom row.
     out(&[
@@ -1245,7 +1283,7 @@ fn launch_deck_inner(
             ])
             .is_none()
             {
-                close_workspace(ws);
+                cleanup();
                 return Err("pane swap for agent layout failed".into());
             }
             Some((agent_pane.to_string(), cmd))
@@ -1257,7 +1295,7 @@ fn launch_deck_inner(
     let editor_command = match editor::prepare_editor(ws, root, &target, agent, &launch_args) {
         Ok(command) => command,
         Err(error) => {
-            close_workspace(ws);
+            cleanup();
             return Err(error);
         }
     };
@@ -1266,7 +1304,7 @@ fn launch_deck_inner(
         out(&["herdr", "pane", "run", &agent_pane, &command]);
     }
 
-    focus_workspace(ws);
+    out(&["herdr", "tab", "focus", root_tab]);
     Ok(())
 }
 

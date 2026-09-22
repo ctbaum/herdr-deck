@@ -108,11 +108,11 @@ fn protect_dir(dir: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn socket_path_for(socket: &str, workspace: &str) -> PathBuf {
+fn socket_path_for(socket: &str, editor_pane: &str) -> PathBuf {
     runtime_dir().join(format!(
         "{}-{}.sock",
         session_key(socket),
-        safe_component(workspace)
+        safe_component(editor_pane)
     ))
 }
 
@@ -120,7 +120,7 @@ fn record_path(record: &EditorRecord) -> PathBuf {
     state_dir().join(format!(
         "{}-{}.json",
         session_key(&record.herdr_socket),
-        safe_component(&record.workspace_id)
+        safe_component(&record.editor_pane_id)
     ))
 }
 
@@ -153,7 +153,19 @@ fn read_records() -> Vec<EditorRecord> {
 }
 
 fn remove_record(record: &EditorRecord) {
-    let _ = fs::remove_file(record_path(record));
+    let Ok(entries) = fs::read_dir(state_dir()) else {
+        return;
+    };
+    for path in entries.flatten().map(|entry| entry.path()) {
+        let matches = fs::read(&path)
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<EditorRecord>(&bytes).ok())
+            .as_ref()
+            == Some(record);
+        if matches {
+            let _ = fs::remove_file(path);
+        }
+    }
 }
 
 fn nvim_remote_expr(socket: &Path, expression: &str) -> Option<String> {
@@ -203,8 +215,8 @@ fn remove_stale_socket(socket: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// Record the deck editor for `workspace` and return the pane command that
-/// starts it. The agent env travels on the workspace, not the command line.
+/// Record the deck editor and return the pane command that starts it. Records
+/// and listener sockets are pane-scoped so one workspace can hold many decks.
 pub fn prepare_editor(
     workspace: &str,
     pane: &str,
@@ -219,7 +231,7 @@ pub fn prepare_editor(
         workspace_id: workspace.into(),
         editor_pane_id: pane.into(),
         cwd: cwd.into(),
-        nvim_socket: socket_path_for(&socket, workspace),
+        nvim_socket: socket_path_for(&socket, pane),
         agent: agent
             .filter(|agent| matches!(*agent, "claude" | "codex" | "pi"))
             .map(String::from),
@@ -247,9 +259,9 @@ fn pane_workspace(pane: &str) -> Option<String> {
         .map(String::from)
 }
 
-/// Pane command that restarts the editor after a server restart. Workspace env
-/// from `workspace create --env` is not assumed to survive the restart, so the
-/// agent contract rides along as a command-line prefix. The recovery window
+/// Pane command that restarts the editor after a server restart. Launch-time
+/// env is not assumed to survive the restart, so the agent contract rides
+/// along as a command-line prefix. The recovery window
 /// lets Herdr restore native agent sessions before Neovim inspects the tab.
 fn restore_command(record: &EditorRecord) -> Result<String, String> {
     let Some(agent) = record.agent.as_deref() else {
@@ -408,13 +420,21 @@ fn resolve_clicked(path: &str, cwd: &Path) -> Option<PathBuf> {
     candidate.is_file().then_some(candidate)
 }
 
-fn pane_cwd(pane: &str) -> Option<PathBuf> {
+fn pane_context(pane: &str) -> Option<(PathBuf, String)> {
     let value = herdr_json(&["pane", "get", pane])?;
-    value
-        .pointer("/result/pane/foreground_cwd")
-        .or_else(|| value.pointer("/result/pane/cwd"))
+    let pane = value.pointer("/result/pane")?;
+    let cwd = pane["foreground_cwd"]
+        .as_str()
+        .or_else(|| pane["cwd"].as_str())?;
+    let tab = pane["tab_id"].as_str()?;
+    Some((PathBuf::from(cwd), tab.into()))
+}
+
+fn pane_tab(pane: &str) -> Option<String> {
+    herdr_json(&["pane", "get", pane])?
+        .pointer("/result/pane/tab_id")
         .and_then(Value::as_str)
-        .map(PathBuf::from)
+        .map(String::from)
 }
 
 fn open_in_nvim(socket: &Path, path: &Path, line: Option<u32>) -> Result<(), String> {
@@ -458,27 +478,23 @@ pub fn open_clicked_link() -> Result<(), String> {
     let Some((path, line)) = parse_clicked(&clicked) else {
         return Err(format!("could not parse clicked file path: {clicked}"));
     };
-    let Some(cwd) = pane_cwd(&pane) else {
-        return Err(format!(
-            "could not determine working directory for pane {pane}"
-        ));
+    let Some((cwd, tab)) = pane_context(&pane) else {
+        return Err(format!("could not determine context for pane {pane}"));
     };
     let Some(path) = resolve_clicked(&path, &cwd) else {
         return Err(format!("clicked file does not exist: {path}"));
     };
     let socket = herdr_socket()?;
-    let Some(record) = read_records()
-        .into_iter()
-        .find(|record| record.workspace_id == workspace && record.herdr_socket == socket)
-    else {
-        return Err(format!(
-            "no deck editor is recorded for workspace {workspace}"
-        ));
+    let Some(record) = read_records().into_iter().find(|record| {
+        record.workspace_id == workspace
+            && record.herdr_socket == socket
+            && (record.editor_pane_id == pane
+                || pane_tab(&record.editor_pane_id).as_deref() == Some(tab.as_str()))
+    }) else {
+        return Err(format!("no deck editor is recorded for tab {tab}"));
     };
     if !nvim_responding(&record.nvim_socket) {
-        return Err(format!(
-            "deck editor for workspace {workspace} is not running"
-        ));
+        return Err(format!("deck editor for tab {tab} is not running"));
     }
     open_in_nvim(&record.nvim_socket, &path, line)?;
 
@@ -518,19 +534,19 @@ mod tests {
     }
 
     #[test]
-    fn listener_paths_are_stable_session_scoped_and_sanitized() {
-        let first = socket_path_for("/tmp/session-a/herdr.sock", "workspace:1");
-        let second = socket_path_for("/tmp/session-a/herdr.sock", "workspace:1");
-        let other_workspace = socket_path_for("/tmp/session-a/herdr.sock", "workspace:2");
-        let other = socket_path_for("/tmp/session-b/herdr.sock", "workspace:1");
+    fn listener_paths_are_stable_session_and_editor_scoped() {
+        let first = socket_path_for("/tmp/session-a/herdr.sock", "w1:p1");
+        let second = socket_path_for("/tmp/session-a/herdr.sock", "w1:p1");
+        let sibling = socket_path_for("/tmp/session-a/herdr.sock", "w1:p2");
+        let other = socket_path_for("/tmp/session-b/herdr.sock", "w1:p1");
         assert_eq!(first, second);
-        assert_ne!(first, other_workspace);
+        assert_ne!(first, sibling);
         assert_ne!(first, other);
         assert!(
             first
                 .file_name()
                 .and_then(|name| name.to_str())
-                .is_some_and(|name| name.ends_with("-workspace-1.sock"))
+                .is_some_and(|name| name.ends_with("-w1-p1.sock"))
         );
     }
 

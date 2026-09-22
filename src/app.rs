@@ -133,6 +133,7 @@ impl HitRegion {
 
 pub struct LaunchForm {
     pub dir: PathBuf,
+    pub workspace: Option<String>,
     pub target: LaunchTarget,
     pub agent: usize, // index into App.agents; == agents.len() means "none"
     pub branch: String,
@@ -147,9 +148,10 @@ pub struct LaunchForm {
 }
 
 impl LaunchForm {
-    fn new(dir: PathBuf, agent: usize) -> Self {
+    fn new(dir: PathBuf, workspace: Option<String>, agent: usize) -> Self {
         Self {
             dir,
+            workspace,
             target: LaunchTarget::SameCheckout,
             agent,
             branch: String::new(),
@@ -285,6 +287,7 @@ pub enum Pending {
     Reload,
     Launch {
         dir: PathBuf,
+        workspace: Option<String>,
         agent: Option<String>,
         branch: String,
         dangerous: bool,
@@ -518,23 +521,31 @@ impl App {
     }
 
     fn open_new_cockpit(&mut self) {
-        let Some(dir) = self.selected_entry().and_then(Entry::launch_dir).cloned() else {
+        let Some(entry) = self.selected_entry() else {
             self.status = Some(Status::info("no local project selected"));
             return;
         };
-        self.open_launch_form(dir);
+        let workspace = match &entry.kind {
+            EntryKind::Workspace { id, .. } => Some(id.clone()),
+            _ => None,
+        };
+        let Some(dir) = entry.launch_dir().cloned() else {
+            self.status = Some(Status::info("no local project selected"));
+            return;
+        };
+        self.open_launch_form(dir, workspace);
     }
 
     /// Open the launch form immediately and fetch its checkout candidates on
     /// a one-off worker thread; `drain_candidates` fills them in.
-    fn open_launch_form(&mut self, dir: PathBuf) {
+    fn open_launch_form(&mut self, dir: PathBuf, workspace: Option<String>) {
         let (tx, rx) = mpsc::channel();
         self.candidates_rx = Some(rx);
         let d = dir.clone();
         std::thread::spawn(move || {
             let _ = tx.send((d.clone(), ext::worktree_candidates(&d)));
         });
-        self.mode = Mode::Launch(LaunchForm::new(dir, self.default_agent()));
+        self.mode = Mode::Launch(LaunchForm::new(dir, workspace, self.default_agent()));
     }
 
     /// Deliver finished candidate loads to the launch form (non-blocking).
@@ -606,10 +617,17 @@ impl App {
             }
             Pending::Launch {
                 dir,
+                workspace,
                 agent,
                 branch,
                 dangerous,
-            } => match ext::launch_deck(&dir, agent.as_deref(), branch.trim(), dangerous) {
+            } => match ext::launch_deck(
+                &dir,
+                workspace.as_deref(),
+                agent.as_deref(),
+                branch.trim(),
+                dangerous,
+            ) {
                 Ok(()) => self.quit = true,
                 Err(e) => {
                     self.status = Some(Status::err(e));
@@ -928,7 +946,7 @@ impl App {
                 self.quit = true;
             }
             EntryKind::Worktree(p) | EntryKind::Cleanable { path: p, .. } | EntryKind::Dir(p) => {
-                self.open_launch_form(p.clone());
+                self.open_launch_form(p.clone(), None);
             }
             EntryKind::Session(session) => {
                 let session = session.clone();
@@ -1159,13 +1177,13 @@ impl App {
         let Mode::Launch(form) = &self.mode else {
             return;
         };
-        let branch = match form.target {
-            LaunchTarget::SameCheckout => String::new(),
+        let (branch, workspace) = match form.target {
+            LaunchTarget::SameCheckout => (String::new(), form.workspace.clone()),
             LaunchTarget::Worktree if form.branch.trim().is_empty() => {
                 self.status = Some(Status::info("choose or enter a worktree"));
                 return;
             }
-            LaunchTarget::Worktree => form.branch.clone(),
+            LaunchTarget::Worktree => (form.branch.clone(), None),
         };
         let msg = if branch.is_empty() {
             "building new cockpit…"
@@ -1174,6 +1192,7 @@ impl App {
         };
         self.pending = Some(Pending::Launch {
             dir: form.dir.clone(),
+            workspace,
             agent: self.agents.get(form.agent).cloned(),
             branch,
             dangerous: form.dangerous,
@@ -1210,7 +1229,7 @@ impl App {
             path = format!("{}/{path}", ext::home());
         }
         match std::fs::create_dir_all(&path) {
-            Ok(()) => self.open_launch_form(PathBuf::from(path)),
+            Ok(()) => self.open_launch_form(PathBuf::from(path), None),
             Err(error) => {
                 self.status = Some(Status::err(format!("mkdir failed: {error}")));
                 self.mode = Mode::List;
@@ -1263,6 +1282,7 @@ mod tests {
     fn launch_form(branches: &[&str]) -> LaunchForm {
         LaunchForm {
             dir: PathBuf::from("/repo"),
+            workspace: None,
             target: LaunchTarget::Worktree,
             agent: 0,
             branch: String::new(),
@@ -1403,7 +1423,18 @@ mod tests {
             panic!("new cockpit should open the launch form");
         };
         assert_eq!(form.dir, PathBuf::from("/repo"));
+        assert_eq!(form.workspace.as_deref(), Some("workspace-1"));
         assert_eq!(form.target, LaunchTarget::SameCheckout);
+
+        app.submit_launch();
+        assert!(matches!(
+            app.pending,
+            Some(Pending::Launch {
+                workspace: Some(ref id),
+                ref branch,
+                ..
+            }) if id == "workspace-1" && branch.is_empty()
+        ));
     }
 
     #[test]

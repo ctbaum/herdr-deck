@@ -13,7 +13,7 @@ Git stays in the same cockpit through Neogit.
 herdr-deck runs inside a Herdr pane and drives everything by shelling out to the
 `herdr` and [`wt` (worktrunk)](https://github.com/max-sixty/worktrunk) CLIs.
 herdr-agents.nvim keeps Claude or Codex connected to the editor; herdr-deck
-recreates the whole workspace around that integration.
+recreates each cockpit tab around that integration.
 
 > [!IMPORTANT]
 > This is my personal workflow extracted into a public binary, not a generic
@@ -40,10 +40,11 @@ recreates the whole workspace around that integration.
   `herdr --remote` thin client in its own terminal window, leaving the local
   session alone. Running it inside a pane would nest Herdr in Herdr.
 - **Open**: Enter on a live workspace focuses it. `ctrl-o` (or the visible
-  **new cockpit** action) opens another independent editor, agent, and shell on
-  that workspace's checkout; the files and Git state remain shared. Enter on a
-  worktree or directory opens the same form. Choose **same checkout**, or
-  switch to **worktree** to select an existing checkout or enter a new branch
+  **new cockpit** action) opens another independent editor, agent, and shell as
+  a neighboring tab in that workspace; the checkout, files, and Git state
+  remain shared. Enter on a worktree or directory opens the same form. Choose
+  **same checkout**, or switch to **worktree** to select an existing checkout or
+  enter a new branch
   or Worktrunk shortcut (`^`, `-`, `@`, `pr:N`, `mr:N`, or a PR/MR URL).
   Worktrunk creates or resolves worktrees, runs their lifecycle hooks, and
   returns the checkout path to herdr-deck. Each result is one cockpit tab;
@@ -53,7 +54,7 @@ recreates the whole workspace around that integration.
   recently visited projects without opening the picker.
 - **Open agent file links**: when installed as a native Herdr plugin, Ctrl-click
   a linked `path/to/file:line` or `file://` URL in agent output to open it in
-  that deck's existing Neovim pane. Each editor has a workspace-specific RPC
+  that cockpit tab's existing Neovim pane. Each editor has its own RPC
   listener; no second Neovim process is created.
 - **Survive server restarts**: each deck editor runs in a detached Neovim
   process. After `herdr server stop` and a later server start, the native plugin
@@ -200,8 +201,8 @@ becomes interactive. Set `HERDR_NVIM_AGENT_START_TIMEOUT` to change the default
 
 ### Editor recovery
 
-Each deck editor runs Neovim directly in its pane with `--listen` on a
-workspace-scoped socket, recorded in the plugin state directory. The socket
+Each deck editor runs Neovim directly in its pane with `--listen` on an
+editor-pane-scoped socket, recorded in the plugin state directory. The socket
 lets clicked file links in agent output open in the existing editor. The
 listener address and agent launch contract remain in the pane's shell, so
 running plain `nvim` after a quit recreates the same editor endpoint. The plugin
@@ -227,8 +228,8 @@ session plugins already cover that inside Neovim.
 
 | variable | direction | purpose |
 |---|---|---|
-| `HERDR_NVIM_AGENT`, `HERDR_NVIM_AGENT_ARGS_JSON` | herdr-deck → workspace | launcher-neutral editor-agent startup contract described above |
-| `HERDR_NVIM_AGENT_RECOVER` | herdr-deck → workspace | opt in to safe same-editor agent recovery on automatic startup |
+| `HERDR_NVIM_AGENT`, `HERDR_NVIM_AGENT_ARGS_JSON` | herdr-deck → cockpit tab | launcher-neutral editor-agent startup contract described above |
+| `HERDR_NVIM_AGENT_RECOVER` | herdr-deck → cockpit tab | opt in to safe same-editor agent recovery on automatic startup |
 | `HERDR_NVIM_AGENT_RECOVER_WAIT_MS` | restored editor process → Neovim adapter | one-shot delay while Herdr restores native agents; automatic restores use `5000` without retaining it in the pane shell |
 | `NVIM_LISTEN_ADDRESS` | herdr-deck → editor pane shell | keep plain `nvim` relaunches on the deck's recorded RPC socket |
 | `HERDR_DECK_REMOTES` | user → herdr-deck | comma/space-separated SSH aliases shown as remote entries |
