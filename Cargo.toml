@@ -2,7 +2,7 @@
 name = "herdr-deck"
 version = "0.2.0"
 edition = "2024"
-description = "Companion workspace launcher for herdr-agents.nvim: open Claude and Codex in ready-made Herdr decks"
+description = "The companion workspace launcher for herdr-agents.nvim: open or resume Claude, Codex, and Pi in a ready-made Neovim, agent, and shell deck."
 license = "MIT"
 repository = "https://github.com/ctbaum/herdr-deck"
 
