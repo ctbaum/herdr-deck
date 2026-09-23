@@ -202,7 +202,7 @@ fn nvim_listen_command(socket: &Path, restore_wait: bool) -> String {
     // ponytail: NVIM_LISTEN_ADDRESS is deprecated but is the only shell-native
     // way for a later plain `nvim` to reuse this socket; use a wrapper if removed.
     format!(
-        "export NVIM_LISTEN_ADDRESS={socket}; {wait}{} --listen {socket}",
+        "export NVIM_LISTEN_ADDRESS={socket} HERDR_NVIM_AGENT_SPLIT_SIDE='left' HERDR_NVIM_AGENT_SPLIT_WIDTH_PERCENTAGE='0.4'; {wait}{} --listen {socket}",
         shell_quote(&nvim_bin())
     )
 }
@@ -555,7 +555,7 @@ mod tests {
         unsafe { env::set_var("HERDR_DECK_NVIM_BIN", "/tmp/my nvim") };
         assert_eq!(
             nvim_listen_command(Path::new("/tmp/a socket.sock"), false),
-            "export NVIM_LISTEN_ADDRESS='/tmp/a socket.sock'; '/tmp/my nvim' --listen '/tmp/a socket.sock'"
+            "export NVIM_LISTEN_ADDRESS='/tmp/a socket.sock' HERDR_NVIM_AGENT_SPLIT_SIDE='left' HERDR_NVIM_AGENT_SPLIT_WIDTH_PERCENTAGE='0.4'; '/tmp/my nvim' --listen '/tmp/a socket.sock'"
         );
         let record = EditorRecord {
             version: RECORD_VERSION,
@@ -569,7 +569,7 @@ mod tests {
         };
         assert_eq!(
             restore_command(&record).unwrap(),
-            "export HERDR_NVIM_AGENT='claude' HERDR_NVIM_AGENT_ARGS_JSON='[\"--resume\",\"it'\"'\"'s\"]' HERDR_NVIM_AGENT_RECOVER='1'; export NVIM_LISTEN_ADDRESS='/tmp/w1.sock'; HERDR_NVIM_AGENT_RECOVER_WAIT_MS='5000' '/tmp/my nvim' --listen '/tmp/w1.sock'"
+            "export HERDR_NVIM_AGENT='claude' HERDR_NVIM_AGENT_ARGS_JSON='[\"--resume\",\"it'\"'\"'s\"]' HERDR_NVIM_AGENT_RECOVER='1'; export NVIM_LISTEN_ADDRESS='/tmp/w1.sock' HERDR_NVIM_AGENT_SPLIT_SIDE='left' HERDR_NVIM_AGENT_SPLIT_WIDTH_PERCENTAGE='0.4'; HERDR_NVIM_AGENT_RECOVER_WAIT_MS='5000' '/tmp/my nvim' --listen '/tmp/w1.sock'"
         );
         let pi_record = EditorRecord {
             agent: Some("pi".into()),
@@ -578,12 +578,12 @@ mod tests {
         };
         assert_eq!(
             restore_command(&pi_record).unwrap(),
-            "export HERDR_NVIM_AGENT='pi' HERDR_NVIM_AGENT_ARGS_JSON='[\"--session\",\"/tmp/session with spaces.jsonl\"]' HERDR_NVIM_AGENT_RECOVER='1'; export NVIM_LISTEN_ADDRESS='/tmp/w1.sock'; HERDR_NVIM_AGENT_RECOVER_WAIT_MS='5000' '/tmp/my nvim' --listen '/tmp/w1.sock'"
+            "export HERDR_NVIM_AGENT='pi' HERDR_NVIM_AGENT_ARGS_JSON='[\"--session\",\"/tmp/session with spaces.jsonl\"]' HERDR_NVIM_AGENT_RECOVER='1'; export NVIM_LISTEN_ADDRESS='/tmp/w1.sock' HERDR_NVIM_AGENT_SPLIT_SIDE='left' HERDR_NVIM_AGENT_SPLIT_WIDTH_PERCENTAGE='0.4'; HERDR_NVIM_AGENT_RECOVER_WAIT_MS='5000' '/tmp/my nvim' --listen '/tmp/w1.sock'"
         );
 
         unsafe { env::set_var("HERDR_DECK_NVIM_BIN", "/bin/echo") };
         let probe = format!(
-            "unset HERDR_NVIM_AGENT_RECOVER_WAIT_MS; {}; printf '\\nwait=<%s> agent=<%s> recover=<%s> socket=<%s>\\n' \"${{HERDR_NVIM_AGENT_RECOVER_WAIT_MS-}}\" \"$HERDR_NVIM_AGENT\" \"$HERDR_NVIM_AGENT_RECOVER\" \"$NVIM_LISTEN_ADDRESS\"",
+            "unset HERDR_NVIM_AGENT_RECOVER_WAIT_MS; {}; printf '\\nwait=<%s> agent=<%s> recover=<%s> socket=<%s> side=<%s> width=<%s>\\n' \"${{HERDR_NVIM_AGENT_RECOVER_WAIT_MS-}}\" \"$HERDR_NVIM_AGENT\" \"$HERDR_NVIM_AGENT_RECOVER\" \"$NVIM_LISTEN_ADDRESS\" \"$HERDR_NVIM_AGENT_SPLIT_SIDE\" \"$HERDR_NVIM_AGENT_SPLIT_WIDTH_PERCENTAGE\"",
             restore_command(&pi_record).unwrap()
         );
         let output = Command::new("sh").args(["-c", &probe]).output().unwrap();
@@ -593,6 +593,8 @@ mod tests {
         assert!(output.contains("agent=<pi>"));
         assert!(output.contains("recover=<1>"));
         assert!(output.contains("socket=</tmp/w1.sock>"));
+        assert!(output.contains("side=<left>"));
+        assert!(output.contains("width=<0.4>"));
         unsafe { env::remove_var("HERDR_DECK_NVIM_BIN") };
     }
 }

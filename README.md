@@ -58,7 +58,7 @@ Rust and Cargo are needed only to build or install from source.
 
 ### Opinionated setup
 
-Each cockpit is one tab: editor top-left (70%), agent top-right (30%), and a
+Each cockpit is one tab: agent top-left (40%), editor top-right (60%), and a
 full-width shell at the bottom (20%). Git stays inside Neovim through Neogit.
 The layout is fixed.
 
@@ -129,6 +129,8 @@ herdr-deck passes this launch contract to the editor:
 | --- | --- |
 | `HERDR_NVIM_AGENT` | selected `claude`, `codex`, or `pi` adapter |
 | `HERDR_NVIM_AGENT_ARGS_JSON` | dangerous-mode and session-resume arguments |
+| `HERDR_NVIM_AGENT_SPLIT_SIDE` | launcher-owned agent pane side; deck uses `left` |
+| `HERDR_NVIM_AGENT_SPLIT_WIDTH_PERCENTAGE` | launcher-owned agent pane width; deck uses `0.4` |
 | `HERDR_NVIM_AGENT_RECOVER` | permit safe agent recovery after editor relaunch |
 | `HERDR_NVIM_AGENT_RECOVER_WAIT_MS` | recovery delay; automatic restores use `5000` |
 | `NVIM_LISTEN_ADDRESS` | preserve the cockpit's Neovim RPC endpoint |
